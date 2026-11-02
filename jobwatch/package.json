@@ -1,0 +1,13 @@
+{
+  "name": "jobwatch",
+  "version": "1.0.0",
+  "description": "BOSS直聘新岗位巡检：常驻已登录浏览器，定时抓取并推送到 Bark，岗位存 SQLite",
+  "dependencies": {
+    "patchright": "^1.64.2",
+    "playwright": "^1.64.1"
+  },
+  "private": true,
+  "scripts": {
+    "start": "node --experimental-sqlite --no-warnings watcher.js"
+  }
+}

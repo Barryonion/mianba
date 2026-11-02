@@ -13,18 +13,43 @@
 - `server.js`：零依赖 Node 服务（18+），负责静态文件、`/api/state` 整份状态读写、`/api/chat` 转发 LLM（OpenAI 兼容接口，默认智谱 `glm-5.3` 编程套餐端点，可用 `LLM_URL` / `LLM_MODEL` 环境变量改）
 - `public/`：原生 HTML/JS，没有构建步骤
 - 数据存在 `data/state.json`（已 gitignore），部署时不会被同步或覆盖
+- 岗位雷达：环境变量 `JOBS_DB` 指向岗位巡检程序写的 SQLite（`jobs` 表），`/api/jobs` 只读查询，首页和 `#/jobs` 展示，可一键建为目标岗位。用的是 Node 内置的 `node:sqlite`（Node 22.11 要加 `--experimental-sqlite`）。不配就不显示
 - 只监听 127.0.0.1，由 `tailscale serve` 提供 HTTPS，tailnet 外的设备访问不到。语音功能必须在 HTTPS 下才能用
 
 ## 部署（阿里云 ECS）
 
 ```sh
 ./deploy.sh         # 在本机运行：rsync 代码到服务器 /opt/mianba（不碰 data/），写 systemd 服务（开机自启、挂了自动拉起）+ tailscale serve，再重启服务
-./deploy.sh <key>   # 首次部署或换 key 时用：智谱个人 key 写进服务器的 /etc/mianba.env（权限 600）
+./deploy.sh <key>   # 首次部署或换 key 时用：智谱个人 key 写进服务器 /etc/mianba.env（权限 600）的 LLM_KEY 行
 ```
+
+要接岗位雷达，在服务器的 `/etc/mianba.env` 里加一行 `JOBS_DB=<jobs.db 路径>`，再执行 `./deploy.sh`。
 
 服务器地址用环境变量 `MIANBA_HOST` 指定（如 `root@<服务器 IP>`），也可以写进仓库根目录的 `.deploy.local`（已 gitignore）。服务器需要已经装好 Node（`/usr/local/bin/node`），并且 Tailscale 已登录。访问地址是 `https://<服务器的 tailnet 机器名>.<你的 tailnet>.ts.net`，日志用 `journalctl -u mianba` 查看。
 
 阿里云内网 DNS（100.100.2.x）落在 Tailscale 使用的 100.64/10 网段里，Tailscale 默认的 iptables 规则会丢掉 DNS 回包，导致整台机器解析不了域名。服务器上要先执行一次 `tailscale set --netfilter-mode=off --accept-dns=false`。
+
+## 岗位巡检（`jobwatch/`）
+
+岗位雷达的数据来源，和面霸部署在同一台服务器，独立运行（`/opt/jobwatch`，systemd 服务 `jobwatch`）。
+
+- 常驻一个已登录 BOSS直聘的浏览器（patchright + Xvfb）。每天 8–23 点每 30–50 分钟按 `queries` 逐个搜索，每个关键词滚动加载 `pagesPerQuery` 页（每页 15 条），截获岗位列表接口
+- 所有岗位写入 `jobs.db`（`jobs` 表，同一岗位只存一条）。薪资上限 ≥ `minMaxSalaryK`、职位名或技能含 `mustContain`、不是校招或实习的新岗位推送到 Bark
+- 搜索条件变化后的第一轮只记录不推送，避免刷屏。遇到安全验证或登录失效时，最多每小时用 Bark 提醒一次
+- BOSS 会把普通 Playwright 跳到空白页，所以用 patchright。机房 IP 会弹安全验证，需要人工点一下
+
+```sh
+jobwatch/deploy.sh   # 在本机运行：同步代码到 /opt/jobwatch（不碰 config.json、profile/、jobs.db 等运行数据），装依赖和 Chromium，写 systemd 服务，重启巡检
+```
+
+首次部署后，在服务器的 `/opt/jobwatch/config.json` 里填 `barkKey`（字段说明见 `config.example.json`），然后远程登录 BOSS：
+
+```sh
+ssh -f -N -L 5901:localhost:5900 $MIANBA_HOST   # 远程桌面只监听服务器的 127.0.0.1，走 SSH 隧道
+open vnc://localhost:5901                       # 密码在服务器 /root/.vnc/plain；在浏览器里完成验证，用 BOSS App 扫码登录
+```
+
+日志用 `journalctl -u jobwatch` 查看。面霸要读岗位库，在 `/etc/mianba.env` 里写 `JOBS_DB=/opt/jobwatch/jobs.db`。
 
 ## 本地开发
 

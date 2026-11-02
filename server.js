@@ -44,6 +44,21 @@ async function chat({ system, messages, json }) {
   return (await r.json()).choices[0].message.content
 }
 
+// 岗位雷达：只读巡检程序写的 SQLite（JOBS_DB 指向它），没配就不提供
+const JOBS_DB = process.env.JOBS_DB
+let jobsDb
+function listJobs() {
+  if (!JOBS_DB || !fs.existsSync(JOBS_DB)) return null
+  if (!jobsDb) {
+    const { DatabaseSync } = require('node:sqlite') // Node 22.11 要加 --experimental-sqlite
+    jobsDb = new DatabaseSync(JOBS_DB)
+    jobsDb.exec('PRAGMA query_only = ON') // 这个版本不认 readOnly 选项，在连接上禁止写入
+  }
+  return jobsDb.prepare(`SELECT id, job_name, salary_desc, salary_max_k, brand_name, brand_scale, brand_stage, brand_industry,
+    area, business_area, experience, degree, skills, welfare, boss_name, boss_title, url, query, matched, pushed,
+    first_seen, last_seen, seen_count FROM jobs ORDER BY first_seen DESC`).all()
+}
+
 http.createServer(async (req, res) => {
   try {
     if (req.url === '/api/state' && req.method === 'GET') {
@@ -55,6 +70,10 @@ http.createServer(async (req, res) => {
       fs.writeFileSync(STATE + '.tmp', JSON.stringify(state))
       fs.renameSync(STATE + '.tmp', STATE)
       return send(res, 200, { ok: true })
+    }
+    if (req.url === '/api/jobs' && req.method === 'GET') {
+      const jobs = listJobs()
+      return jobs ? send(res, 200, jobs) : send(res, 404, { error: '没配 JOBS_DB' })
     }
     if (req.url === '/api/chat' && req.method === 'POST') {
       return send(res, 200, { content: await chat(await readBody(req)) })

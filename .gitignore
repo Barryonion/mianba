@@ -2,3 +2,11 @@ data/
 .DS_Store
 .tokenize/
 .deploy.local
+# 岗位巡检的服务器运行数据（含 Bark key、登录态、抓到的岗位）
+jobwatch/config.json
+jobwatch/node_modules/
+jobwatch/profile/
+jobwatch/jobs.db*
+jobwatch/seen.json
+jobwatch/last.json
+jobwatch/.scankey
