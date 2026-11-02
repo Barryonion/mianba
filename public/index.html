@@ -32,6 +32,20 @@
   .tags { margin: 6px 0; }
   .tags span { display: inline-block; font-size: 12px; padding: 2px 8px; margin: 2px 4px 2px 0; border-radius: 6px; background: var(--card); }
   .card .btn { font-size: 14px; padding: 6px 12px; }
+  .md { white-space: normal; }
+  .md div { white-space: pre-wrap; }
+  .md .gap { height: .6em; }
+  .md .mh { font-weight: 600; font-size: 17px; margin: 10px 0 4px; }
+  .md blockquote { margin: 6px 0; padding: 2px 10px; border-left: 3px solid var(--accent); opacity: .9; }
+  .md hr { border: 0; border-top: 1px solid rgba(127,127,127,.35); margin: 10px 0; }
+  .md code { font: 14px ui-monospace, Menlo, monospace; background: var(--card); padding: 1px 4px; border-radius: 4px; }
+  .md pre.code { font: 13px/1.45 ui-monospace, Menlo, monospace; background: rgba(0,0,0,.25); padding: 8px; border-radius: 8px; overflow-x: auto; white-space: pre; }
+  .md .tbl { overflow-x: auto; margin: 6px 0; }
+  .md table { border-collapse: collapse; font-size: 14px; }
+  .md th, .md td { border: 1px solid rgba(127,127,127,.35); padding: 4px 8px; text-align: left; vertical-align: top; min-width: 4.5em; }
+  .msg.md { max-width: 100%; }
+  a.more { position: relative; padding-right: 28px; }
+  a.more::after { content: "›"; position: absolute; right: 12px; top: 50%; transform: translateY(-50%); opacity: .4; font-size: 22px; }
   .card details { margin: 6px 0; font-size: 14px; }
   .card summary { cursor: pointer; color: var(--accent); }
   .msg { padding: 10px 14px; margin: 8px 0; border-radius: 14px; max-width: 85%; white-space: pre-wrap; width: fit-content; }

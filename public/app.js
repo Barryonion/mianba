@@ -58,12 +58,52 @@ ${t.intel || '无'}`,
 verdict：如果是真实面试能否通过、为什么（2-3 句）；
 weak：回答最薄弱的 2-4 处，指出问题所在；
 better：针对这几处给出更好的回答思路或示例。`,
+  study: `你是资深技术面试辅导老师。用户会给出简历、JD、JD 中的一条要求，以及面试官针对这条要求的追问。帮候选人准备这道追问。
+输出严格 JSON，格式为 {"concepts":[{"name":"概念名","explain":"解释"}],"approach":"回答思路"}：
+concepts：4-6 个回答这道追问必须讲清楚的相关领域概念，explain 用 2-3 句话说清是什么、面试常考什么；
+approach 是字符串，多条内容在字符串内用换行分隔，不要用数组：先给回答结构（先说什么后说什么），再指出简历里哪段真实经历可以拿来举例；简历里没有的不要编造，改为建议如何诚实回答并展示补齐思路。`,
+  tutor: (t, g) => `你是资深技术面试辅导老师，正在陪候选人准备下面这条岗位要求。中文回答，结构清楚、简洁，可以用列表和短代码。
+要在手机上读：少用表格、标题不超过两级、段落短。解释概念时讲清原理、面试常见追问和易错点；给回答思路或示例时，只用简历里的真实经历，不编造；候选人自己作答时，直接指出问题并给出改进版。
+
+${P.material(t)}
+
+## 当前要求
+${g.requirement}
+简历证据：${g.evidence || '无'}
+面试官追问：${g.probe}`,
   greeting: '你好，我是今天的面试官。先做个简单的自我介绍吧，重点讲讲和这个岗位相关的经历。',
 }
 
 // ---------- 页面 ----------
 const back = href => `<a href="${href}">‹ 返回</a>`
 const icon = g => ({ strong: '✅', weak: '⚠️' })[g.strength] || '❌'
+// 极简 Markdown：先 esc 整段，再在转义后的文本上识别标题、表格、代码块、引用、分隔线、粗体、行内代码，不会引入任意 HTML
+function md(s) {
+  const out = [], lines = esc(s).split('\n')
+  const inline = l => l.replace(/`([^`]+)`/g, '<code>$1</code>').replace(/\*\*(.+?)\*\*/g, '<b>$1</b>')
+  const isRow = l => /^\s*\|/.test(l)
+  for (let i = 0; i < lines.length; i++) {
+    const l = lines[i]
+    let m
+    if (/^\s*```/.test(l)) {
+      const code = []
+      while (++i < lines.length && !/^\s*```/.test(lines[i])) code.push(lines[i])
+      out.push(`<pre class=code>${code.join('\n')}</pre>`)
+    } else if (isRow(l)) {
+      const rows = []
+      for (; i < lines.length && isRow(lines[i]); i++) {
+        if (!/^\s*\|[\s:|-]+$/.test(lines[i])) rows.push(lines[i].trim().replace(/^\||\|$/g, '').split('|'))
+      }
+      i--
+      out.push(`<div class=tbl><table>${rows.map((r, k) => `<tr>${r.map(c => k ? `<td>${inline(c.trim())}</td>` : `<th>${inline(c.trim())}</th>`).join('')}</tr>`).join('')}</table></div>`)
+    } else if ((m = l.match(/^#{1,6}\s+(.*)/))) out.push(`<div class=mh>${inline(m[1])}</div>`)
+    else if (/^\s*([-*_])\1{2,}\s*$/.test(l)) out.push('<hr>')
+    else if ((m = l.match(/^&gt;\s?(.*)/))) out.push(`<blockquote>${inline(m[1])}</blockquote>`)
+    else out.push(l.trim() ? `<div>${inline(l)}</div>` : '<div class=gap></div>')
+  }
+  return out.join('')
+}
+const gapOf = (tid, i) => target(tid)?.gaps[i]
 const reviewHTML = r => [['🎯 能否通过', r.verdict], ['⚠️ 薄弱回答', r.weak], ['✨ 更好的答法', r.better]]
   .map(([h, v]) => `<div class=card><b>${h}</b><pre>${esc(txt(v) || '（AI 没给出这一项）')}</pre></div>`).join('')
 
@@ -142,7 +182,7 @@ function renderJobs(btn) {
 const targetPage = t => `${back('#/')}<h1>${esc(title(t))}</h1>
 <a class="btn primary" href="#/i/${t.id}">🎤 开始模拟面试</a>
 <h2>差距分析 <small>✅ 有力 ⚠️ 薄弱 ❌ 缺失</small></h2>
-${t.gaps.map(g => `<div class=card><b>${icon(g)} ${esc(g.requirement)}</b>${g.evidence ? `<small>${esc(g.evidence)}</small>` : ''}<div>追问：${esc(g.probe)}</div></div>`).join('')}
+${t.gaps.map((g, i) => `<a class="card more" href="#/g/${t.id}/${i}"><b>${icon(g)} ${esc(g.requirement)}</b>${g.evidence ? `<small>${esc(g.evidence)}</small>` : ''}<div>追问：${esc(g.probe)}</div>${g.study ? '<small>已有概念讲解和回答思路</small>' : ''}</a>`).join('')}
 <h2>定制简历</h2>
 ${t.tailored ? `<details><summary>查看定制版</summary><pre>${esc(t.tailored)}</pre><button onclick="copyTailored('${t.id}')">复制</button></details>` : ''}
 <button onclick="tailor('${t.id}')">${t.tailored ? '重新生成' : '按 JD 生成定制简历'}</button>
@@ -153,6 +193,27 @@ ${t.intel ? `<pre>${esc(t.intel)}</pre>` : ''}
 <h2>练习记录</h2>
 ${[...t.sessions].reverse().map(s => `<a class=row href="#/s/${t.id}/${s.id}">${new Date(s.date).toLocaleString()}<span class=stars>${'★'.repeat(s.rating)}</span></a>`).join('') || '<small>暂无</small>'}
 <button class=danger onclick="delTarget('${t.id}')">删除这个岗位</button>`
+
+const ASKS = ['给我一个参考回答', '面试官接下来还会怎么追问？', '我先答一遍，你来点评']
+const gapPage = (t, i) => {
+  const g = t.gaps[i]
+  if (!g) return targetPage(t)
+  const st = g.study
+  return `${back('#/t/' + t.id)}<h1>${icon(g)} ${esc(g.requirement)}</h1>
+<div class=card><small>简历证据</small><div>${esc(g.evidence || '简历里没找到能证明这一条的经历')}</div></div>
+<div class=card><small>面试官追问</small><div><b>${esc(g.probe)}</b></div></div>
+<h2>相关概念 <small>点一个让 AI 展开讲</small></h2>
+${st ? st.concepts.map((c, k) => `<a class="card more" href="javascript:askConcept(${k})"><b>${esc(c.name)}</b><div>${esc(txt(c.explain))}</div></a>`).join('') : '<small>生成中…</small>'}
+<h2>回答思路</h2>
+${st ? `<div class="card md">${md(txt(st.approach))}</div>` : '<small>生成中…</small>'}
+${st ? `<button onclick="genStudy(true)">重新生成概念和思路</button>` : ''}
+<h2>问 AI</h2>
+<div id=chat>${(g.chat || []).map(m => m.role === 'user' ? `<div class="msg user">${esc(m.content)}</div>` : `<div class="msg assistant md">${md(m.content)}</div>`).join('')}</div>
+${ASKS.map((q, k) => `<button onclick="askPreset(${k})">${esc(q)}</button>`).join('')}
+<textarea id=answer rows=3 placeholder="问概念、问怎么答，或者直接写下你的回答让 AI 点评"></textarea>
+<button class=primary onclick="askGap()">发送</button>
+${g.chat?.length ? '<button class=danger onclick="clearGapChat()">清空对话</button>' : ''}`
+}
 
 const interviewPage = t => `${back('#/t/' + t.id)}<h1>${esc(title(t))}</h1>
 <div id=chat></div>
@@ -183,8 +244,10 @@ function route() {
     : page === 't' ? targetPage(t)
     : page === 'i' ? interviewPage(t)
     : page === 's' ? sessionPage(t, sub)
+    : page === 'g' ? gapPage(t, +sub)
     : home()
   if (page === 'i' && t) startInterview(t)
+  if (page === 'g' && t?.gaps[+sub] && !t.gaps[+sub].study) genStudy()
   if (page === 'jobs') renderJobs()
   scrollTo(0, 0)
 }
@@ -254,6 +317,46 @@ function delTarget(id) {
     S.targets = S.targets.filter(t => t.id !== id)
     await save()
     location.hash = '#/'
+  })
+}
+
+// ---------- 差距详情：概念讲解 + 回答思路 + 追问 ----------
+// 当前打开的是哪条：每次都从 S 里现取，切回前台重新 load 后也不会写到旧对象上
+const curGap = () => { const [, , tid, i] = location.hash.split('/'); return { t: target(tid), g: gapOf(tid, +i) } }
+
+const genStudy = (force = false) => withBusy(async () => {
+  const { t, g } = curGap()
+  if (!g || (g.study && !force)) return
+  const r = await askJSON(P.study, `${P.material(t)}\n\n<要求>${g.requirement}</要求>\n<简历证据>${g.evidence || '无'}</简历证据>\n<追问>${g.probe}</追问>`)
+  const fresh = curGap().g
+  if (!fresh || !Array.isArray(r.concepts)) throw new Error('AI 返回格式不对，再试一次')
+  fresh.study = { concepts: r.concepts, approach: r.approach }
+  await save()
+  route()
+})
+
+function askGap(text = $('#answer').value.trim()) {
+  if (!text || busy) return
+  withBusy(async () => {
+    const { t, g } = curGap()
+    const messages = [...(g.chat || []), { role: 'user', content: text }]
+    const reply = await chat(P.tutor(t, g), messages)
+    const fresh = curGap().g
+    fresh.chat = [...messages, { role: 'assistant', content: reply }]
+    await save()
+    route()
+    $('#chat').lastElementChild?.previousElementSibling?.scrollIntoView({ block: 'start' })
+  })
+}
+const askConcept = k => askGap(`详细讲讲「${curGap().g.study.concepts[k].name}」：原理、和这道追问的关系、面试官常见的深挖点。`)
+const askPreset = k => k === 2 ? $('#answer').focus() : askGap(ASKS[k])
+
+function clearGapChat() {
+  if (!confirm('清空这一条的对话记录？')) return
+  withBusy(async () => {
+    curGap().g.chat = []
+    await save()
+    route()
   })
 }
 
