@@ -34,7 +34,7 @@
 岗位雷达的数据来源，和面霸部署在同一台服务器，独立运行（`/opt/jobwatch`，systemd 服务 `jobwatch`）。
 
 - 常驻一个已登录 BOSS直聘的浏览器（patchright + Xvfb）。每天 8–23 点每 30–50 分钟按 `queries` 逐个搜索，每个关键词滚动加载 `pagesPerQuery` 页（每页 15 条），截获岗位列表接口
-- 所有岗位写入 `jobs.db`（`jobs` 表，同一岗位只存一条）。薪资上限 ≥ `minMaxSalaryK`、职位名或技能含 `mustContain`、不是校招或实习的新岗位推送到 Bark
+- 所有岗位写入 `jobs.db`（`jobs` 表，同一岗位只存一条）。每轮搜完再打开 `jdPerRound` 个（默认 8）还没有职位描述的符合条件岗位的详情页，把职位描述存进 `jd` 列，面霸里可以直接看，建目标岗位时自动填好 JD。薪资上限 ≥ `minMaxSalaryK`、职位名或技能含 `mustContain`、不是校招或实习的新岗位推送到 Bark
 - 搜索条件变化后的第一轮只记录不推送，避免刷屏。遇到安全验证或登录失效时，最多每小时用 Bark 提醒一次
 - BOSS 会把普通 Playwright 跳到空白页，所以用 patchright。机房 IP 会弹安全验证，需要人工点一下
 

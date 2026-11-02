@@ -2,7 +2,7 @@
 const fs = require("fs");
 const path = require("path");
 const { chromium } = require("patchright");
-const { saveJob, markPushed } = require("./store");
+const { saveJob, markPushed, needJd, saveJd } = require("./store");
 
 const DIR = __dirname;
 const CONFIG = JSON.parse(fs.readFileSync(path.join(DIR, "config.json"), "utf8"));
@@ -101,6 +101,29 @@ async function scanQuery(page, query) {
   }
 }
 
+// 补抓职位描述：每轮挑几个还没抓过的符合条件岗位，打开详情页读 .job-sec-text（服务端渲染，不用截接口）
+async function fetchJds(page) {
+  let ok = 0;
+  for (const j of needJd(CONFIG.jdPerRound ?? 8)) {
+    try {
+      await page.goto(j.url, { waitUntil: "domcontentloaded", timeout: 45000 });
+    } catch (e) {
+      LOG("详情页打不开:", j.job_name, e.message); // 下轮再试
+      continue;
+    }
+    const cur = page.url();
+    if (/verify|security-check/.test(cur)) return { ok, blocked: "打开详情页时遇到安全验证" };
+    if (/login/.test(cur)) return { ok, blocked: "登录已失效" };
+    const jd = await page.locator(".job-sec-text").first().innerText({ timeout: 15000 }).catch(() => null);
+    // 页面正常但没有描述（职位已关闭等）记空字符串，不再重抓
+    saveJd(j.id, (jd || "").trim());
+    if (jd) ok++;
+    await page.mouse.wheel(0, rand(200, 600));
+    await sleep(rand(6000, 12000));
+  }
+  return { ok };
+}
+
 async function scanOnce(page) {
   const jobs = [];
   const stats = [];
@@ -175,6 +198,12 @@ async function main() {
           }
           saveSeen();
           LOG(`本轮 ${r.stats.join(" ")}，去重后 ${roundSeen.size} 条，新增符合条件 ${fresh} 条${firstRun ? "（首轮只记录不推送）" : ""}`);
+          const d = await fetchJds(page);
+          if (d.ok) LOG(`补抓职位描述 ${d.ok} 条`);
+          if (d.blocked) {
+            LOG("受阻:", d.blocked);
+            await notifyBlocked(d.blocked);
+          }
           if (firstRun && r.jobs.length) {
             await bark("BOSS 巡检已启动", `首轮记录 ${roundSeen.size} 个岗位（符合条件 ${fresh} 个），之后有新岗位会推送`);
             fs.writeFileSync(KEY_FILE, scanKey);

@@ -99,17 +99,17 @@ const resumePage = () => `${back('#/')}<h1>我的简历</h1>
 const jdDraft = j => `${join([j.job_name, j.salary_desc, join([j.area, j.business_area], ''), j.experience, j.degree], '｜')}
 技能标签：${j.skills || '无'}
 
-（打开 BOSS 岗位详情，把完整职位描述粘贴到这里替换这一行，分析会准得多）`
+${j.jd || '（职位描述还没抓到：打开 BOSS 岗位详情，把完整职位描述粘贴到这里替换这一行，分析会准得多）'}`
 
 const newPage = j => `${back(j ? '#/jobs' : '#/')}<h1>新建目标岗位</h1>
 <input id=company placeholder="公司" value="${esc(j?.brand_name)}"><input id=role placeholder="岗位" value="${esc(j?.job_name)}">
-${j ? `<a class=btn href="${esc(safeUrl(j.url))}" target=_blank rel=noopener>去 BOSS 复制完整 JD ›</a>` : ''}
+${j && !j.jd ? `<a class=btn href="${esc(safeUrl(j.url))}" target=_blank rel=noopener>去 BOSS 复制完整 JD ›</a>` : ''}
 <textarea id=jd rows=14 placeholder="整段粘贴 JD">${j ? esc(jdDraft(j)) : ''}</textarea>
 <button class=primary onclick="analyze()">分析差距</button>`
 
 const jobsPage = () => `${back('#/')}<h1>岗位雷达</h1>
 ${J === null ? '<small>加载中…</small>' : J === false ? '<small>服务器没接巡检数据（JOBS_DB）</small>' : `
-<input id=jq type=search placeholder="搜公司 / 职位 / 技能 / 区域" value="${esc(jf.q)}" oninput="jf.q = this.value; renderJobs()">
+<input id=jq type=search placeholder="搜公司 / 职位 / 技能 / 区域 / 职位描述" value="${esc(jf.q)}" oninput="jf.q = this.value; renderJobs()">
 <button class="${jf.all ? '' : 'primary'}" onclick="jf.all = !jf.all; renderJobs(this)">只看符合条件</button>
 <button onclick="jf.sort = jf.sort === 'new' ? 'pay' : 'new'; renderJobs(this)">${jf.sort === 'new' ? '按发现时间' : '按薪资上限'}</button>
 <div id=jobs></div>`}`
@@ -121,6 +121,7 @@ const jobCard = j => {
 <small>${esc(join([j.brand_name, j.brand_scale, j.brand_stage, j.brand_industry]))}</small>
 <small>${esc(join([join([j.area, j.business_area], ''), j.experience, j.degree, j.boss_name && join([j.boss_name, j.boss_title], ' ')]))}</small>
 ${j.skills ? `<div class=tags>${j.skills.split(',').slice(0, 10).map(s => `<span>${esc(s)}</span>`).join('')}</div>` : ''}
+${j.jd ? `<details><summary>职位描述</summary><pre>${esc(j.jd)}</pre></details>` : ''}
 <small>首次发现 ${when(j.first_seen)} · 出现 ${j.seen_count} 次${j.pushed ? ' · 已推送' : ''}${j.matched ? '' : ' · 不符合条件'}</small>
 <a class=btn href="${esc(safeUrl(j.url))}" target=_blank rel=noopener>去 BOSS 看</a>
 ${t ? `<a class=btn href="#/t/${t.id}">已建目标 ›</a>` : `<a class="btn primary" href="#/new/${encodeURIComponent(j.id)}">建为目标岗位</a>`}
@@ -133,7 +134,7 @@ function renderJobs(btn) {
   if (!$('#jobs') || !J) return
   const q = jf.q.trim().toLowerCase()
   const list = J.filter(j => (jf.all || j.matched) &&
-    (!q || join([j.job_name, j.brand_name, j.skills, j.area, j.business_area, j.brand_industry], ' ').toLowerCase().includes(q)))
+    (!q || join([j.job_name, j.brand_name, j.skills, j.area, j.business_area, j.brand_industry, j.jd], ' ').toLowerCase().includes(q)))
   if (jf.sort === 'pay') list.sort((a, b) => (b.salary_max_k ?? -1) - (a.salary_max_k ?? -1)) // 稳定排序，同薪资仍按发现时间
   $('#jobs').innerHTML = `<small>${list.length} 个</small>` + (list.map(jobCard).join('') || '<p><small>没有匹配的岗位</small></p>')
 }

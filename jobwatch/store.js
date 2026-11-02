@@ -34,6 +34,10 @@ db.exec(`
   );
   CREATE INDEX IF NOT EXISTS idx_jobs_first_seen ON jobs(first_seen);
 `);
+// 后加的列：职位描述要打开详情页才有，单独补抓
+const cols = new Set(db.prepare("PRAGMA table_info(jobs)").all().map((c) => c.name));
+if (!cols.has("jd")) db.exec("ALTER TABLE jobs ADD COLUMN jd TEXT");       // 职位描述全文，抓到但页面没有描述时为空字符串
+if (!cols.has("jd_at")) db.exec("ALTER TABLE jobs ADD COLUMN jd_at TEXT"); // 抓取时间，非空表示不用再抓
 
 const upsert = db.prepare(`
   INSERT INTO jobs (id, job_name, salary_desc, salary_max_k, brand_name, brand_scale, brand_stage, brand_industry,
@@ -52,6 +56,8 @@ const upsert = db.prepare(`
     last_seen = excluded.last_seen, seen_count = seen_count + 1
 `);
 const markPushedStmt = db.prepare(`UPDATE jobs SET pushed = 1 WHERE id = ?`);
+const needJdStmt = db.prepare(`SELECT id, url, job_name FROM jobs WHERE matched = 1 AND jd_at IS NULL ORDER BY first_seen DESC LIMIT ?`);
+const saveJdStmt = db.prepare(`UPDATE jobs SET jd = ?, jd_at = ? WHERE id = ?`);
 
 const now = () => new Date().toLocaleString("sv-SE", { timeZone: "Asia/Shanghai" }); // 2026-11-02 09:30:00
 const list = (v) => (Array.isArray(v) ? v.join(",") : v || null);
@@ -83,4 +89,10 @@ function saveJob(j, { query, salaryMaxK, matched, seenAt = now() }) {
   });
 }
 
-module.exports = { db, saveJob, markPushed: (id) => markPushedStmt.run(id) };
+module.exports = {
+  db,
+  saveJob,
+  markPushed: (id) => markPushedStmt.run(id),
+  needJd: (limit) => needJdStmt.all(limit),
+  saveJd: (id, jd) => saveJdStmt.run(jd, now(), id),
+};

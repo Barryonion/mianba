@@ -56,7 +56,7 @@ function listJobs() {
   }
   return jobsDb.prepare(`SELECT id, job_name, salary_desc, salary_max_k, brand_name, brand_scale, brand_stage, brand_industry,
     area, business_area, experience, degree, skills, welfare, boss_name, boss_title, url, query, matched, pushed,
-    first_seen, last_seen, seen_count FROM jobs ORDER BY first_seen DESC`).all()
+    first_seen, last_seen, seen_count, jd FROM jobs ORDER BY first_seen DESC`).all()
 }
 
 http.createServer(async (req, res) => {

@@ -1,6 +1,7 @@
 {
   "queries": ["Java后端", "Java架构师", "Java技术专家", "高级Java"],
   "pagesPerQuery": 3,
+  "jdPerRound": 8,
   "city": "101280600",
   "minMaxSalaryK": 40,
   "mustContain": "java",
