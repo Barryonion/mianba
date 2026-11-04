@@ -75,7 +75,12 @@ ${g.requirement}
 }
 
 // ---------- 页面 ----------
-const back = href => `<a href="${href}">‹ 返回</a>`
+// 顶部吸顶返回栏，滚动长页面时随时能回去
+const back = (href, label = '返回') => `<div class=top><a href="${href}">‹ ${esc(label)}</a></div>`
+// 差距分析计数：✅ 有力 ⚠️ 薄弱 ❌ 缺失，外加已准备（生成过概念讲解）的条数
+const tally = t => ({ strong: t.gaps.filter(g => g.strength === 'strong').length, weak: t.gaps.filter(g => g.strength === 'weak').length,
+  none: t.gaps.filter(g => !['strong', 'weak'].includes(g.strength)).length, studied: t.gaps.filter(g => g.study).length })
+const pills = c => `<span class="pill bad">❌ ${c.none}</span><span class="pill warn">⚠️ ${c.weak}</span><span class="pill ok">✅ ${c.strong}</span>`
 const icon = g => ({ strong: '✅', weak: '⚠️' })[g.strength] || '❌'
 // 极简 Markdown：先 esc 整段，再在转义后的文本上识别标题、表格、代码块、引用、分隔线、粗体、行内代码，不会引入任意 HTML
 function md(s) {
@@ -120,15 +125,16 @@ const radar = () => {
   const fresh = m.filter(j => j.first_seen?.startsWith(today())).length
   const last = J.reduce((a, j) => j.last_seen > a ? j.last_seen : a, '')
   return `<h2>岗位雷达 <small>共 ${J.length} 个，最近巡检 ${when(last)}</small></h2>
-<a class=row href="#/jobs">符合条件 ${m.length} 个${fresh ? ` · <b class=new>今天新增 ${fresh}</b>` : ''}<small>看薪资、公司、技能标签，一键建为目标岗位</small></a>`
+<a class="row more" href="#/jobs">符合条件 ${m.length} 个${fresh ? ` · <b class=new>今天新增 ${fresh}</b>` : ''}<small>看薪资、公司、技能标签，一键建为目标岗位</small></a>`
 }
 
 const home = () => `<h1>面霸</h1>
 ${radar()}
 <h2>我的简历</h2>
-<a class=row href="#/resume">${S.resume ? `已录入 ${S.resume.length} 字` : '还没有简历，点这里添加'}</a>
+<a class="row more" href="#/resume">${S.resume ? `已录入 ${S.resume.length} 字` : '还没有简历，点这里添加'}</a>
 <h2>目标岗位</h2>
-${S.targets.map(t => `<a class=row href="#/t/${t.id}">${esc(title(t))}<small>模拟面试 ${t.sessions.length} 次</small></a>`).join('')}
+${S.targets.map(t => { const c = tally(t); return `<a class="row more" href="#/t/${t.id}"><b>${esc(t.company)}</b> · ${esc(t.role)}
+<div class=meta>${pills(c)}<span>已准备 ${c.studied}/${t.gaps.length}</span><span>模拟 ${t.sessions.length} 次</span></div></a>` }).join('') || '<small>还没有目标岗位</small>'}
 ${S.resume ? '<a class="btn primary" href="#/new">＋ 新建目标岗位</a>' : ''}`
 
 const resumePage = () => `${back('#/')}<h1>我的简历</h1>
@@ -150,8 +156,7 @@ ${j && !j.jd ? `<a class=btn href="${esc(safeUrl(j.url))}" target=_blank rel=noo
 const jobsPage = () => `${back('#/')}<h1>岗位雷达</h1>
 ${J === null ? '<small>加载中…</small>' : J === false ? '<small>服务器没接巡检数据（JOBS_DB）</small>' : `
 <input id=jq type=search placeholder="搜公司 / 职位 / 技能 / 区域 / 职位描述" value="${esc(jf.q)}" oninput="jf.q = this.value; renderJobs()">
-<button class="${jf.all ? '' : 'primary'}" onclick="jf.all = !jf.all; renderJobs(this)">只看符合条件</button>
-<button onclick="jf.sort = jf.sort === 'new' ? 'pay' : 'new'; renderJobs(this)">${jf.sort === 'new' ? '按发现时间' : '按薪资上限'}</button>
+<div class=chips><button class="chip ${jf.all ? '' : 'on'}" onclick="jf.all = !jf.all; renderJobs(this)">只看符合条件</button><button class="chip ${jf.sort === 'new' ? 'on' : ''}" onclick="jf.sort = 'new'; renderJobs(this)">按发现时间</button><button class="chip ${jf.sort === 'pay' ? 'on' : ''}" onclick="jf.sort = 'pay'; renderJobs(this)">按薪资上限</button></div>
 <div id=jobs></div>`}`
 
 const jobCard = j => {
@@ -179,10 +184,21 @@ function renderJobs(btn) {
   $('#jobs').innerHTML = `<small>${list.length} 个</small>` + (list.map(jobCard).join('') || '<p><small>没有匹配的岗位</small></p>')
 }
 
-const targetPage = t => `${back('#/')}<h1>${esc(title(t))}</h1>
-<a class="btn primary" href="#/i/${t.id}">🎤 开始模拟面试</a>
-<h2>差距分析 <small>✅ 有力 ⚠️ 薄弱 ❌ 缺失</small></h2>
-${t.gaps.map((g, i) => `<a class="card more" href="#/g/${t.id}/${i}"><b>${icon(g)} ${esc(g.requirement)}</b>${g.evidence ? `<small>${esc(g.evidence)}</small>` : ''}<div>追问：${esc(g.probe)}</div>${g.study ? '<small>已有概念讲解和回答思路</small>' : ''}</a>`).join('')}
+const gapCard = (t, g, i) => `<a class="card more gapc ${g.strength || 'none'}" href="#/g/${t.id}/${i}"><b>${icon(g)} ${esc(g.requirement)}</b>
+${g.evidence ? `<small>${esc(g.evidence)}</small>` : ''}<div class=probe>追问：${esc(g.probe)}</div>${g.study ? '<span class="pill ok">已准备</span>' : ''}</a>`
+
+// 先列缺失和薄弱的（要重点准备），有力的折叠起来；链接仍用原始序号
+const targetPage = t => {
+  const c = tally(t)
+  const rows = t.gaps.map((g, i) => ({ g, i }))
+  const todo = rows.filter(x => x.g.strength !== 'strong').sort((a, b) => (a.g.strength === 'weak') - (b.g.strength === 'weak'))
+  const done = rows.filter(x => x.g.strength === 'strong')
+  return `${back('#/', '面霸')}<h1>${esc(t.company)}<small class=sub>${esc(t.role)}</small></h1>
+<div class=meta>${pills(c)}<span>已准备 ${c.studied}/${t.gaps.length}</span></div>
+<a class="btn primary wide" href="#/i/${t.id}">🎤 开始模拟面试</a>
+<h2>重点准备 <small>点进去看相关概念、回答思路，和 AI 练追问</small></h2>
+${todo.map(x => gapCard(t, x.g, x.i)).join('') || '<small>没有薄弱项</small>'}
+${done.length ? `<details class=fold><summary>✅ 简历能证明的 ${done.length} 条</summary>${done.map(x => gapCard(t, x.g, x.i)).join('')}</details>` : ''}
 <h2>定制简历</h2>
 ${t.tailored ? `<details><summary>查看定制版</summary><pre>${esc(t.tailored)}</pre><button onclick="copyTailored('${t.id}')">复制</button></details>` : ''}
 <button onclick="tailor('${t.id}')">${t.tailored ? '重新生成' : '按 JD 生成定制简历'}</button>
@@ -191,34 +207,34 @@ ${t.intel ? `<pre>${esc(t.intel)}</pre>` : ''}
 <textarea id=intel rows=4 placeholder="粘贴小红书 / 牛客面经原文，可多篇"></textarea>
 <button onclick="addIntel('${t.id}')">AI 提炼</button>
 <h2>练习记录</h2>
-${[...t.sessions].reverse().map(s => `<a class=row href="#/s/${t.id}/${s.id}">${new Date(s.date).toLocaleString()}<span class=stars>${'★'.repeat(s.rating)}</span></a>`).join('') || '<small>暂无</small>'}
-<button class=danger onclick="delTarget('${t.id}')">删除这个岗位</button>`
+${[...t.sessions].reverse().map(s => `<a class="row more" href="#/s/${t.id}/${s.id}">${new Date(s.date).toLocaleString()}<span class=stars>${'★'.repeat(s.rating)}</span></a>`).join('') || '<small>暂无，点上面「开始模拟面试」</small>'}
+<div class=footer><button class=danger onclick="delTarget('${t.id}')">删除这个岗位</button></div>`
+}
 
 const ASKS = ['给我一个参考回答', '面试官接下来还会怎么追问？', '我先答一遍，你来点评']
 const gapPage = (t, i) => {
   const g = t.gaps[i]
   if (!g) return targetPage(t)
   const st = g.study
-  return `${back('#/t/' + t.id)}<h1>${icon(g)} ${esc(g.requirement)}</h1>
-<div class=card><small>简历证据</small><div>${esc(g.evidence || '简历里没找到能证明这一条的经历')}</div></div>
-<div class=card><small>面试官追问</small><div><b>${esc(g.probe)}</b></div></div>
+  return `${back('#/t/' + t.id, t.company)}<h1 class=req>${icon(g)} ${esc(g.requirement)}</h1>
+<div class="card gapc ${g.strength || 'none'}"><small>简历证据</small><div>${esc(g.evidence || '简历里没找到能证明这一条的经历')}</div>
+<small class=lbl>面试官追问</small><div><b>${esc(g.probe)}</b></div></div>
 <h2>相关概念 <small>点一个让 AI 展开讲</small></h2>
-${st ? st.concepts.map((c, k) => `<a class="card more" href="javascript:askConcept(${k})"><b>${esc(c.name)}</b><div>${esc(txt(c.explain))}</div></a>`).join('') : '<small>生成中…</small>'}
-<h2>回答思路</h2>
+${st ? `<div class=concepts>${st.concepts.map((c, k) => `<a class="card more" href="javascript:askConcept(${k})"><b>${esc(c.name)}</b><div class=clamp>${esc(txt(c.explain))}</div></a>`).join('')}</div>` : '<small>生成中…</small>'}
+<h2>回答思路 ${st ? `<button class=link onclick="genStudy(true)">重新生成</button>` : ''}</h2>
 ${st ? `<div class="card md">${md(txt(st.approach))}</div>` : '<small>生成中…</small>'}
-${st ? `<button onclick="genStudy(true)">重新生成概念和思路</button>` : ''}
-<h2>问 AI</h2>
-<div id=chat>${(g.chat || []).map(m => m.role === 'user' ? `<div class="msg user">${esc(m.content)}</div>` : `<div class="msg assistant md">${md(m.content)}</div>`).join('')}</div>
-${ASKS.map((q, k) => `<button onclick="askPreset(${k})">${esc(q)}</button>`).join('')}
-<textarea id=answer rows=3 placeholder="问概念、问怎么答，或者直接写下你的回答让 AI 点评"></textarea>
-<button class=primary onclick="askGap()">发送</button>
-${g.chat?.length ? '<button class=danger onclick="clearGapChat()">清空对话</button>' : ''}`
+<h2>问 AI ${g.chat?.length ? '<button class="link danger" onclick="clearGapChat()">清空对话</button>' : ''}</h2>
+<div id=chat>${(g.chat || []).map(m => m.role === 'user' ? `<div class="msg user">${esc(m.content)}</div>` : `<div class="msg assistant md">${md(m.content)}</div>`).join('') || '<small>点上面的概念，或用下面的快捷提问开始</small>'}</div>
+<div class=composer>
+<div class=chips>${ASKS.map((q, k) => `<button class=chip onclick="askPreset(${k})">${esc(q)}</button>`).join('')}</div>
+<div class=bar><textarea id=answer rows=1 placeholder="问 AI，或写下你的回答让它点评" oninput="grow(this)"></textarea><button class=primary onclick="askGap()">发送</button></div>
+</div>`
 }
 
 const interviewPage = t => `${back('#/t/' + t.id)}<h1>${esc(title(t))}</h1>
 <div id=chat></div>
-<div id=controls>
-  <textarea id=answer rows=3 placeholder="语音或打字回答"></textarea>
+<div id=controls class=composer>
+  <textarea id=answer rows=2 placeholder="语音或打字回答" oninput="grow(this)"></textarea>
   <button id=mic class=primary onclick="toggleMic()">🎙 语音回答</button>
   <button onclick="sendAnswer()">发送</button>
   <button onclick="endInterview()">结束面试</button>
@@ -348,6 +364,7 @@ function askGap(text = $('#answer').value.trim()) {
     $('#chat').lastElementChild?.previousElementSibling?.scrollIntoView({ block: 'start' })
   })
 }
+const grow = el => { el.style.height = 'auto'; el.style.height = Math.min(el.scrollHeight, 180) + 'px' }
 const askConcept = k => askGap(`详细讲讲「${curGap().g.study.concepts[k].name}」：原理、和这道追问的关系、面试官常见的深挖点。`)
 const askPreset = k => k === 2 ? $('#answer').focus() : askGap(ASKS[k])
 
