@@ -36,9 +36,12 @@ WantedBy=timers.target
 EOT
 }
 svc ops-backup "daily backup of mianba and jobwatch data" "/opt/ops/backup.sh" "*-*-* 03:30:00 Asia/Shanghai"
+svc ops-remind "interview reminder from mianba state" "/usr/local/bin/node /opt/ops/daily.js remind" "*-*-* 08:30:00 Asia/Shanghai"
+svc ops-question "daily interview question from weak gaps" "/usr/local/bin/node /opt/ops/daily.js question" "*-*-* 12:30:00 Asia/Shanghai"
 svc ops-watchdog "check jobwatch and mianba health" "/opt/ops/watchdog.sh" "*:00/30"
 svc gitnudge "daily GitHub commit check" "/usr/local/bin/node /opt/ops/gitnudge.js" "*-*-* 21:00:00 Asia/Shanghai"
 svc gitnudge-late "late reminder if no GitHub commit today" "/usr/local/bin/node /opt/ops/gitnudge.js --if-none" "*-*-* 23:00:00 Asia/Shanghai"
 systemctl daemon-reload
-systemctl enable --now ops-backup.timer ops-watchdog.timer gitnudge.timer gitnudge-late.timer >/dev/null 2>&1
+grep -q ^MIANBA_URL= /etc/ops.env || echo "提醒：/etc/ops.env 里还没有 MIANBA_URL，daily.js 的面试提醒和每日一题需要它" >&2
+systemctl enable --now ops-backup.timer ops-watchdog.timer ops-remind.timer ops-question.timer gitnudge.timer gitnudge-late.timer >/dev/null 2>&1
 systemctl list-timers "ops-*" "gitnudge*" --no-pager'

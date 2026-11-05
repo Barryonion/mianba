@@ -34,7 +34,7 @@
 岗位雷达的数据来源，和面霸部署在同一台服务器，独立运行（`/opt/jobwatch`，systemd 服务 `jobwatch`）。
 
 - 常驻一个已登录 BOSS直聘的浏览器（patchright + Xvfb）。每天 8–23 点每 30–50 分钟按 `queries` 逐个搜索，每个关键词滚动加载 `pagesPerQuery` 页（每页 15 条），截获岗位列表接口
-- 所有岗位写入 `jobs.db`（`jobs` 表，同一岗位只存一条）。每轮搜完再打开 `jdPerRound` 个（默认 8）还没有职位描述的符合条件岗位的详情页，把职位描述存进 `jd` 列，面霸里可以直接看，建目标岗位时自动填好 JD。薪资上限 ≥ `minMaxSalaryK`、职位名或技能含 `mustContain`、不是校招或实习的新岗位推送到 Bark
+- 每轮搜完由 AI 对照简历给岗位打 0-100 匹配度分（`scorePerRound` 个/轮），岗位雷达可按匹配度排序。新岗位一轮合并成一条推送。每轮搜完再打开 `jdPerRound` 个（默认 8）还没有职位描述的符合条件岗位的详情页，把职位描述存进 `jd` 列，面霸里可以直接看，建目标岗位时自动填好 JD。薪资上限 ≥ `minMaxSalaryK`、职位名或技能含 `mustContain`、不是校招或实习的新岗位推送到 Bark
 - 搜索条件变化后的第一轮只记录不推送，避免刷屏。遇到安全验证或登录失效时，最多每小时用 Bark 提醒一次
 - BOSS 会把普通 Playwright 跳到空白页，所以用 patchright。机房 IP 会弹安全验证，需要人工点一下
 
@@ -64,4 +64,5 @@ LLM_KEY=xxx node server.js   # http://127.0.0.1:8787
 - `backup.sh`：每天 03:30 备份 `state.json` 和 `jobs.db`（用 sqlite 在线备份）到 `/root/backups/<日期>/`，保留 30 天
 - `watchdog.sh`：每 30 分钟检查一次。jobwatch 或面霸服务挂了，或者活跃时段内超过 2 小时没成功巡检一轮，就推送 Bark；同一问题最多每 3 小时提醒一次，恢复后推一条
 - `gitnudge.js`：每天 21:00 推送当天 GitHub 提交情况，23:00 还没提交再提醒一次。不配 `GH_TOKEN` 只统计公开仓库
+- `daily.js`：8:30 推送今天/明天的笔试面试提醒（读 state 里的投递进度）；12:30 从薄弱项轮着挑一条追问当每日一题，点开直达差距详情页
 - `install-mac.sh`：在 Mac 上运行，装一个 launchd 任务，每天 22:30 把服务器的备份拉到 `~/Backups/mianba`

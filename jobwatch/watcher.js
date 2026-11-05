@@ -2,7 +2,8 @@
 const fs = require("fs");
 const path = require("path");
 const { chromium } = require("patchright");
-const { saveJob, markPushed, needJd, saveJd } = require("./store");
+const { saveJob, markPushed, needJd, saveJd, needScore, saveScore } = require("./store");
+const MIANBA = "http://127.0.0.1:8787"; // 同机的面霸，借它的 LLM 接口打分
 
 const DIR = __dirname;
 const CONFIG = JSON.parse(fs.readFileSync(path.join(DIR, "config.json"), "utf8"));
@@ -124,6 +125,40 @@ async function fetchJds(page) {
   return { ok };
 }
 
+// AI 匹配度打分：简历从面霸的 state 拿，走面霸的 /api/chat（key 在那边）。每轮打几个，慢慢补齐
+async function scoreJobs() {
+  let resume = "";
+  try {
+    const st = await (await fetch(`${MIANBA}/api/state`, { signal: AbortSignal.timeout(10000) })).json();
+    resume = st.resume || "";
+  } catch { /* 面霸没起来，这轮跳过 */ }
+  if (!resume) return { ok: 0, skip: "没拿到简历" };
+  let ok = 0;
+  for (const j of needScore(CONFIG.scorePerRound ?? 4)) {
+    const sys = `你是技术招聘顾问。根据候选人简历和岗位信息评估匹配度，重点看技术栈和业务方向的吻合程度，年限和薪资是否对等。
+输出严格 JSON：{"score":0到100的整数,"reason":"一句话，说最加分或最减分的一点"}，不要用数组。`;
+    const user = `<候选人简历>\n${resume}\n</候选人简历>\n\n<岗位>\n${[j.job_name, j.salary_desc, j.skills].filter(Boolean).join("｜")}\n${j.jd}\n</岗位>`;
+    let score, reason;
+    try {
+      const r = await fetch(`${MIANBA}/api/chat`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ system: sys, messages: [{ role: "user", content: user }], json: true }),
+        signal: AbortSignal.timeout(120000),
+      });
+      const c = JSON.parse((await r.json()).content.replace(/```json|```/g, "").trim());
+      score = Number(c.score); reason = String(c.reason || "").slice(0, 200);
+      if (!(score >= 0 && score <= 100)) throw new Error(`分数不对: ${c.score}`);
+    } catch (e) {
+      LOG("打分失败:", j.job_name, e.message); // 下轮重试
+      continue;
+    }
+    saveScore(j.id, Math.round(score), reason);
+    ok++;
+    await sleep(rand(2000, 5000));
+  }
+  return { ok };
+}
+
 async function scanOnce(page) {
   const jobs = [];
   const stats = [];
@@ -168,6 +203,7 @@ async function main() {
           await notifyBlocked(r.blocked);
         } else {
           let fresh = 0;
+          const toPush = [];
           const roundSeen = new Set();
           for (const j of r.jobs) {
             const id = j.encryptJobId;
@@ -185,25 +221,24 @@ async function main() {
             seen[id] = Date.now();
             if (!matched) continue;
             fresh++;
-            if (!firstRun) {
-              const where = [j.areaDistrict, j.businessDistrict].filter(Boolean).join("·");
-              await bark(
-                `${j.salaryDesc} ${j.jobName}`,
-                `${j.brandName}｜${where}｜${j.jobExperience || ""} ${j.jobDegree || ""}｜${j.brandScaleName || ""}`,
-                `https://www.zhipin.com/job_detail/${id}.html`
-              );
-              markPushed(id);
-              await sleep(500);
-            }
+            if (!firstRun) toPush.push(j);
           }
           saveSeen();
           LOG(`本轮 ${r.stats.join(" ")}，去重后 ${roundSeen.size} 条，新增符合条件 ${fresh} 条${firstRun ? "（首轮只记录不推送）" : ""}`);
+          if (toPush.length) {
+            // 一轮合并成一条推送，不再一个岗位响一次
+            const body = toPush.slice(0, 5).map((j) => `${j.salaryDesc} ${j.jobName}｜${j.brandName}`).join("\n") + (toPush.length > 5 ? `\n共 ${toPush.length} 个` : "");
+            await bark(`新增 ${toPush.length} 个岗位`, body, CONFIG.jobsUrl || `https://www.zhipin.com/job_detail/${toPush[0].encryptJobId}.html`);
+            for (const j of toPush) { markPushed(j.encryptJobId); await sleep(200); }
+          }
           const d = await fetchJds(page);
           if (d.ok) LOG(`补抓职位描述 ${d.ok} 条`);
           if (d.blocked) {
             LOG("受阻:", d.blocked);
             await notifyBlocked(d.blocked);
           }
+          const sc = await scoreJobs();
+          if (sc.ok) LOG(`AI 匹配度打分 ${sc.ok} 条${sc.skip ? `（${sc.skip}）` : ""}`);
           if (firstRun && r.jobs.length) {
             await bark("BOSS 巡检已启动", `首轮记录 ${roundSeen.size} 个岗位（符合条件 ${fresh} 个），之后有新岗位会推送`);
             fs.writeFileSync(KEY_FILE, scanKey);

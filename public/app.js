@@ -118,6 +118,9 @@ const when = s => s ? (s.startsWith(today()) ? '今天 ' : s.slice(5, 11)) + s.s
 const safeUrl = u => /^https:\/\//.test(u || '') ? u : '#'
 const join = (a, sep = ' · ') => a.filter(Boolean).join(sep)
 const jobTarget = j => S.targets.find(t => t.jobId === j.id)
+// 投递进度：t.stages = [{ s, at, note? }]，按时间追加；当前阶段取最后一条
+const STAGES = { applied: '📮 已投递', test: '📝 笔试', i1: '1️⃣ 一面', i2: '2️⃣ 二面', i3: '3️⃣ 三面', hr: '🤝 HR 面', offer: '🎉 Offer', reject: '❌ 终止' }
+const stageNow = t => t.stages?.length ? STAGES[t.stages.at(-1).s] : ''
 // 岗位标记存在面霸自己的 state 里（S.jobMarks[岗位 id] = { s, at }），巡检库保持只读
 const MARKS = { star: '⭐ 收藏', applied: '📮 已投递', skip: '🙅 不合适' }
 const markOf = j => S.jobMarks?.[j.id]?.s
@@ -142,7 +145,7 @@ ${radar()}
 <a class="row more" href="#/resume">${S.resume ? `已录入 ${S.resume.length} 字` : '还没有简历，点这里添加'}</a>
 <h2>目标岗位</h2>
 ${S.targets.map(t => { const c = tally(t); return `<a class="row more" href="#/t/${t.id}"><b>${esc(t.company)}</b> · ${esc(t.role)}
-<div class=meta>${pills(c)}<span>已准备 ${c.studied}/${t.gaps.length}</span><span>模拟 ${t.sessions.length} 次</span></div></a>` }).join('') || '<small>还没有目标岗位</small>'}
+<div class=meta>${pills(c)}<span>已准备 ${c.studied}/${t.gaps.length}</span><span>模拟 ${t.sessions.length} 次</span>${stageNow(t) ? `<span class="pill ${t.stages.at(-1).s === 'offer' ? 'ok' : ''}">${stageNow(t)}</span>` : ''}</div></a>` }).join('') || '<small>还没有目标岗位</small>'}
 ${S.resume ? '<a class="btn primary" href="#/new">＋ 新建目标岗位</a>' : ''}`
 
 const resumePage = () => `${back('#/')}<h1>我的简历</h1>
@@ -165,17 +168,18 @@ const jobsPage = () => `${back('#/')}<h1>岗位雷达</h1>
 ${J === null ? '<small>加载中…</small>' : J === false ? '<small>服务器没接巡检数据（JOBS_DB）</small>' : `
 <input id=jq type=search placeholder="搜公司 / 职位 / 技能 / 区域 / 职位描述" value="${esc(jf.q)}" oninput="jf.q = this.value; renderJobs()">
 <div class=chips>${Object.entries(VIEWS).map(([k, [name, f]]) => `<button class="chip ${jf.view === k ? 'on' : ''}" onclick="jf.view = '${k}'; renderJobs(this)">${name} ${J.filter(f).length}</button>`).join('')}</div>
-<div class=chips><button class="chip ${jf.sort === 'new' ? 'on' : ''}" onclick="jf.sort = 'new'; renderJobs(this)">按发现时间</button><button class="chip ${jf.sort === 'pay' ? 'on' : ''}" onclick="jf.sort = 'pay'; renderJobs(this)">按薪资上限</button></div>
+<div class=chips><button class="chip ${jf.sort === 'new' ? 'on' : ''}" onclick="jf.sort = 'new'; renderJobs(this)">按发现时间</button><button class="chip ${jf.sort === 'pay' ? 'on' : ''}" onclick="jf.sort = 'pay'; renderJobs(this)">按薪资上限</button><button class="chip ${jf.sort === 'score' ? 'on' : ''}" onclick="jf.sort = 'score'; renderJobs(this)">按匹配度</button></div>
 <div id=jobs></div>`}`
 
 const jobCard = j => {
   const t = jobTarget(j)
   const mk = S.jobMarks?.[j.id]
   return `<div class=card id="job-${esc(j.id)}">
-<span class=pay>${esc(j.salary_desc)}</span><b>${j.first_seen?.startsWith(today()) ? '<span class=new>新</span> ' : ''}${esc(j.job_name)}</b>
+<span class=pay>${esc(j.salary_desc)}</span>${j.score != null ? `<span class="sc ${j.score >= 75 ? 'ok' : j.score >= 50 ? 'warn' : ''}">${j.score}</span>` : ''}<b>${j.first_seen?.startsWith(today()) ? '<span class=new>新</span> ' : ''}${esc(j.job_name)}</b>
 <small>${esc(join([j.brand_name, j.brand_scale, j.brand_stage, j.brand_industry]))}</small>
 <small>${esc(join([join([j.area, j.business_area], ''), j.experience, j.degree, j.boss_name && join([j.boss_name, j.boss_title], ' ')]))}</small>
 ${j.skills ? `<div class=tags>${j.skills.split(',').slice(0, 10).map(s => `<span>${esc(s)}</span>`).join('')}</div>` : ''}
+${j.score_reason ? `<small class=why>${j.score} 分：${esc(j.score_reason)}</small>` : ''}
 ${j.jd ? `<details><summary>职位描述</summary><pre>${esc(j.jd)}</pre></details>` : ''}
 <small>首次发现 ${when(j.first_seen)} · 出现 ${j.seen_count} 次${j.pushed ? ' · 已推送' : ''}${j.matched ? '' : ' · 不符合条件'}${mk ? ` · ${MARKS[mk.s]} ${new Date(mk.at).toLocaleDateString()}` : ''}</small>
 <a class=btn href="${esc(safeUrl(j.url))}" target=_blank rel=noopener>去 BOSS 看</a>
@@ -192,6 +196,7 @@ function renderJobs(btn) {
   const list = J.filter(j => VIEWS[jf.view][1](j) &&
     (!q || join([j.job_name, j.brand_name, j.skills, j.area, j.business_area, j.brand_industry, j.jd], ' ').toLowerCase().includes(q)))
   if (jf.sort === 'pay') list.sort((a, b) => (b.salary_max_k ?? -1) - (a.salary_max_k ?? -1)) // 稳定排序，同薪资仍按发现时间
+  if (jf.sort === 'score') list.sort((a, b) => (b.score ?? -1) - (a.score ?? -1)) // 没分数的排最后
   $('#jobs').innerHTML = `<small>${list.length} 个</small>` + (list.map(jobCard).join('') || '<p><small>没有匹配的岗位</small></p>')
 }
 
@@ -207,6 +212,11 @@ const targetPage = t => {
   return `${back('#/', '面霸')}<h1>${esc(t.company)}<small class=sub>${esc(t.role)}</small></h1>
 <div class=meta>${pills(c)}<span>已准备 ${c.studied}/${t.gaps.length}</span></div>
 <a class="btn primary wide" href="#/i/${t.id}">🎤 开始模拟面试</a>
+<h2>投递进度 ${stageNow(t) ? `<small>当前：${stageNow(t)}</small>` : ''}</h2>
+${t.stages?.length ? t.stages.slice().reverse().map(e => `<div class=card><b>${STAGES[e.s] || esc(e.s)}</b> <small style="display:inline">${new Date(e.at).toLocaleDateString()}</small>${e.note ? `<div>${esc(e.note)}</div>` : ''}</div>`).join('') : '<small>还没记录。先选日期（可选，默认今天）、填备注（可选），再点下面的阶段按钮</small>'}
+<input type=date id=stgdate onchange="$('#stgnote')?.focus()">
+<input id=stgnote placeholder="备注，可选（如 HR 微信、面试官风格）">
+<div class=chips>${Object.entries(STAGES).map(([s, n]) => `<button class="chip ${t.stages?.at(-1)?.s === s ? 'on' : ''}" onclick="addStage('${t.id}', '${s}')">${n}</button>`).join('')}</div>
 <h2>重点准备 <small>点进去看相关概念、回答思路，和 AI 练追问</small></h2>
 ${todo.map(x => gapCard(t, x.g, x.i)).join('') || '<small>没有薄弱项</small>'}
 ${done.length ? `<details class=fold><summary>✅ 简历能证明的 ${done.length} 条</summary>${done.map(x => gapCard(t, x.g, x.i)).join('')}</details>` : ''}
@@ -346,6 +356,17 @@ function delTarget(id) {
     location.hash = '#/'
   })
 }
+
+// 追加一条投递进度；日期框留空就记今天，备注可选
+const addStage = (tid, s) => withBusy(async () => {
+  const t = target(tid)
+  const d = $('#stgdate')?.value
+  const note = $('#stgnote')?.value.trim()
+  t.stages ??= []
+  t.stages.push({ s, at: (d || new Date().toISOString().slice(0, 10)) + 'T' + new Date().toISOString().slice(11, 19), ...(note && { note }) })
+  await save()
+  route()
+})
 
 // 再点一次同一个标记就取消；标完只重画列表，当前位置不跳
 async function markJob(id, s) {

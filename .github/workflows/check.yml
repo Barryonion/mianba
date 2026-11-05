@@ -9,4 +9,4 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: node --check server.js && node --check public/app.js && node --check jobwatch/watcher.js && node --check jobwatch/store.js && node --check ops/gitnudge.js && sh -n ops/backup.sh && sh -n ops/watchdog.sh
+      - run: node --check server.js && node --check public/app.js && node --check jobwatch/watcher.js && node --check jobwatch/store.js && node --check ops/gitnudge.js && node --check ops/daily.js && sh -n ops/backup.sh && sh -n ops/watchdog.sh
