@@ -6,7 +6,7 @@ const txt = v => Array.isArray(v) ? v.join('\n') : v // AI 偶尔把字符串字
 let S = { resume: '', targets: [] }
 let busy = false
 let J = null // 岗位雷达：null 加载中，false 服务器没接巡检数据
-const jf = { all: false, sort: 'new', q: '' }
+const jf = { view: 'todo', sort: 'new', q: '' }
 
 async function api(url, body, method = body ? 'POST' : 'GET') {
   const r = await fetch(url, { method, headers: { 'Content-Type': 'application/json' }, body: body && JSON.stringify(body) })
@@ -118,14 +118,22 @@ const when = s => s ? (s.startsWith(today()) ? '今天 ' : s.slice(5, 11)) + s.s
 const safeUrl = u => /^https:\/\//.test(u || '') ? u : '#'
 const join = (a, sep = ' · ') => a.filter(Boolean).join(sep)
 const jobTarget = j => S.targets.find(t => t.jobId === j.id)
+// 岗位标记存在面霸自己的 state 里（S.jobMarks[岗位 id] = { s, at }），巡检库保持只读
+const MARKS = { star: '⭐ 收藏', applied: '📮 已投递', skip: '🙅 不合适' }
+const markOf = j => S.jobMarks?.[j.id]?.s
+// 待看：符合条件且还没标记；全部：包括不符合条件的
+const VIEWS = { todo: ['待看', j => j.matched && !markOf(j)], star: ['收藏', j => markOf(j) === 'star'],
+  applied: ['已投递', j => markOf(j) === 'applied'], skip: ['不合适', j => markOf(j) === 'skip'], all: ['全部', () => true] }
 
 const radar = () => {
   if (!J) return ''
-  const m = J.filter(j => j.matched)
-  const fresh = m.filter(j => j.first_seen?.startsWith(today())).length
+  const todo = J.filter(VIEWS.todo[1])
+  const fresh = todo.filter(j => j.first_seen?.startsWith(today())).length
   const last = J.reduce((a, j) => j.last_seen > a ? j.last_seen : a, '')
+  const n = k => J.filter(VIEWS[k][1]).length
   return `<h2>岗位雷达 <small>共 ${J.length} 个，最近巡检 ${when(last)}</small></h2>
-<a class="row more" href="#/jobs">符合条件 ${m.length} 个${fresh ? ` · <b class=new>今天新增 ${fresh}</b>` : ''}<small>看薪资、公司、技能标签，一键建为目标岗位</small></a>`
+<a class="row more" href="#/jobs">待看 ${todo.length} 个${fresh ? ` · <b class=new>今天新增 ${fresh}</b>` : ''}
+<div class=meta><span>⭐ 收藏 ${n('star')}</span><span>📮 已投递 ${n('applied')}</span><span>🙅 不合适 ${n('skip')}</span></div></a>`
 }
 
 const home = () => `<h1>面霸</h1>
@@ -156,20 +164,23 @@ ${j && !j.jd ? `<a class=btn href="${esc(safeUrl(j.url))}" target=_blank rel=noo
 const jobsPage = () => `${back('#/')}<h1>岗位雷达</h1>
 ${J === null ? '<small>加载中…</small>' : J === false ? '<small>服务器没接巡检数据（JOBS_DB）</small>' : `
 <input id=jq type=search placeholder="搜公司 / 职位 / 技能 / 区域 / 职位描述" value="${esc(jf.q)}" oninput="jf.q = this.value; renderJobs()">
-<div class=chips><button class="chip ${jf.all ? '' : 'on'}" onclick="jf.all = !jf.all; renderJobs(this)">只看符合条件</button><button class="chip ${jf.sort === 'new' ? 'on' : ''}" onclick="jf.sort = 'new'; renderJobs(this)">按发现时间</button><button class="chip ${jf.sort === 'pay' ? 'on' : ''}" onclick="jf.sort = 'pay'; renderJobs(this)">按薪资上限</button></div>
+<div class=chips>${Object.entries(VIEWS).map(([k, [name, f]]) => `<button class="chip ${jf.view === k ? 'on' : ''}" onclick="jf.view = '${k}'; renderJobs(this)">${name} ${J.filter(f).length}</button>`).join('')}</div>
+<div class=chips><button class="chip ${jf.sort === 'new' ? 'on' : ''}" onclick="jf.sort = 'new'; renderJobs(this)">按发现时间</button><button class="chip ${jf.sort === 'pay' ? 'on' : ''}" onclick="jf.sort = 'pay'; renderJobs(this)">按薪资上限</button></div>
 <div id=jobs></div>`}`
 
 const jobCard = j => {
   const t = jobTarget(j)
-  return `<div class=card>
+  const mk = S.jobMarks?.[j.id]
+  return `<div class=card id="job-${esc(j.id)}">
 <span class=pay>${esc(j.salary_desc)}</span><b>${j.first_seen?.startsWith(today()) ? '<span class=new>新</span> ' : ''}${esc(j.job_name)}</b>
 <small>${esc(join([j.brand_name, j.brand_scale, j.brand_stage, j.brand_industry]))}</small>
 <small>${esc(join([join([j.area, j.business_area], ''), j.experience, j.degree, j.boss_name && join([j.boss_name, j.boss_title], ' ')]))}</small>
 ${j.skills ? `<div class=tags>${j.skills.split(',').slice(0, 10).map(s => `<span>${esc(s)}</span>`).join('')}</div>` : ''}
 ${j.jd ? `<details><summary>职位描述</summary><pre>${esc(j.jd)}</pre></details>` : ''}
-<small>首次发现 ${when(j.first_seen)} · 出现 ${j.seen_count} 次${j.pushed ? ' · 已推送' : ''}${j.matched ? '' : ' · 不符合条件'}</small>
+<small>首次发现 ${when(j.first_seen)} · 出现 ${j.seen_count} 次${j.pushed ? ' · 已推送' : ''}${j.matched ? '' : ' · 不符合条件'}${mk ? ` · ${MARKS[mk.s]} ${new Date(mk.at).toLocaleDateString()}` : ''}</small>
 <a class=btn href="${esc(safeUrl(j.url))}" target=_blank rel=noopener>去 BOSS 看</a>
 ${t ? `<a class=btn href="#/t/${t.id}">已建目标 ›</a>` : `<a class="btn primary" href="#/new/${encodeURIComponent(j.id)}">建为目标岗位</a>`}
+<div class=chips>${Object.entries(MARKS).map(([s, name]) => `<button class="chip ${mk?.s === s ? 'on' : ''}" onclick="markJob(${esc(JSON.stringify(j.id))}, '${s}')">${name}</button>`).join('')}</div>
 </div>`
 }
 
@@ -178,7 +189,7 @@ function renderJobs(btn) {
   if (btn) return route()
   if (!$('#jobs') || !J) return
   const q = jf.q.trim().toLowerCase()
-  const list = J.filter(j => (jf.all || j.matched) &&
+  const list = J.filter(j => VIEWS[jf.view][1](j) &&
     (!q || join([j.job_name, j.brand_name, j.skills, j.area, j.business_area, j.brand_industry, j.jd], ' ').toLowerCase().includes(q)))
   if (jf.sort === 'pay') list.sort((a, b) => (b.salary_max_k ?? -1) - (a.salary_max_k ?? -1)) // 稳定排序，同薪资仍按发现时间
   $('#jobs').innerHTML = `<small>${list.length} 个</small>` + (list.map(jobCard).join('') || '<p><small>没有匹配的岗位</small></p>')
@@ -334,6 +345,17 @@ function delTarget(id) {
     await save()
     location.hash = '#/'
   })
+}
+
+// 再点一次同一个标记就取消；标完只重画列表，当前位置不跳
+async function markJob(id, s) {
+  S.jobMarks ??= {}
+  if (S.jobMarks[id]?.s === s) delete S.jobMarks[id]
+  else S.jobMarks[id] = { s, at: new Date().toISOString() }
+  const y = scrollY
+  route()
+  scrollTo(0, y)
+  try { await save() } catch (e) { alert('保存失败：' + e.message) }
 }
 
 // ---------- 差距详情：概念讲解 + 回答思路 + 追问 ----------

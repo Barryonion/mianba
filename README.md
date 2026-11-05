@@ -13,7 +13,7 @@
 - `server.js`：零依赖 Node 服务（18+），负责静态文件、`/api/state` 整份状态读写、`/api/chat` 转发 LLM（OpenAI 兼容接口，默认智谱 `glm-5.3` 编程套餐端点，可用 `LLM_URL` / `LLM_MODEL` 环境变量改）
 - `public/`：原生 HTML/JS，没有构建步骤
 - 数据存在 `data/state.json`（已 gitignore），部署时不会被同步或覆盖
-- 岗位雷达：环境变量 `JOBS_DB` 指向岗位巡检程序写的 SQLite（`jobs` 表），`/api/jobs` 只读查询，首页和 `#/jobs` 展示，可一键建为目标岗位。用的是 Node 内置的 `node:sqlite`（Node 22.11 要加 `--experimental-sqlite`）。不配就不显示
+- 岗位雷达：环境变量 `JOBS_DB` 指向岗位巡检程序写的 SQLite（`jobs` 表），`/api/jobs` 只读查询，首页和 `#/jobs` 展示，可一键建为目标岗位，也可以标记为收藏、已投递或不合适（标记存在面霸自己的 state 里，岗位库保持只读）。用的是 Node 内置的 `node:sqlite`（Node 22.11 要加 `--experimental-sqlite`）。不配就不显示
 - 只监听 127.0.0.1，由 `tailscale serve` 提供 HTTPS，tailnet 外的设备访问不到。语音功能必须在 HTTPS 下才能用
 
 ## 部署（阿里云 ECS）
@@ -56,3 +56,12 @@ open vnc://localhost:5901                       # 密码在服务器 /root/.vnc/
 ```sh
 LLM_KEY=xxx node server.js   # http://127.0.0.1:8787
 ```
+
+## 运维（`ops/`）
+
+和面霸、jobwatch 装在同一台服务器上，`ops/install.sh` 在本机运行，装到 `/opt/ops` 并写 systemd timer。配置在服务器的 `/etc/ops.env`（`BARK_KEY`、`GH_USER`、可选 `GH_TOKEN`），不进仓库。
+
+- `backup.sh`：每天 03:30 备份 `state.json` 和 `jobs.db`（用 sqlite 在线备份）到 `/root/backups/<日期>/`，保留 30 天
+- `watchdog.sh`：每 30 分钟检查一次。jobwatch 或面霸服务挂了，或者活跃时段内超过 2 小时没成功巡检一轮，就推送 Bark；同一问题最多每 3 小时提醒一次，恢复后推一条
+- `gitnudge.js`：每天 21:00 推送当天 GitHub 提交情况，23:00 还没提交再提醒一次。不配 `GH_TOKEN` 只统计公开仓库
+- `install-mac.sh`：在 Mac 上运行，装一个 launchd 任务，每天 22:30 把服务器的备份拉到 `~/Backups/mianba`
