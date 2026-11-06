@@ -49,15 +49,19 @@ const P = {
 ${P.material(t)}
 
 ## 重点追问清单
-${t.gaps.filter(g => g.strength !== 'strong').map(g => `- ${g.requirement}：${g.probe}`).join('\n')}
+${t.gaps.filter(g => g.strength !== 'strong').map(g => `- ${g.requirement}：${g.probe}${g.study ? '（候选人准备过这条，往深处验证真实掌握程度）' : ''}`).join('\n')}
 
 ## 面经情报
 ${t.intel || '无'}`,
-  review: `你是面试复盘教练。下面是一场模拟面试记录。输出严格 JSON，格式为 {"verdict":"...","weak":"...","better":"..."}，
-三个字段都是字符串，多条内容在字符串内用换行分隔，不要用数组：
+  review: t => `你是面试复盘教练。下面是一场模拟面试记录和面试官的追问清单。输出严格 JSON，格式为 {"verdict":"...","weak":"...","better":"...","missed":"..."}，
+四个字段都是字符串，多条内容在字符串内用换行分隔，不要用数组：
 verdict：如果是真实面试能否通过、为什么（2-3 句）；
 weak：回答最薄弱的 2-4 处，指出问题所在；
-better：针对这几处给出更好的回答思路或示例。`,
+better：针对这几处给出更好的回答思路或示例；
+missed：追问清单里这场面试真正被问到、且候选人没答好或没答到的条目，每行照抄一条清单里的要求原文；没问到的和答好了的都不要列；都答好了就空字符串。
+
+## 追问清单
+${t.gaps.filter(g => g.strength !== 'strong').map(g => `- ${g.requirement}`).join('\n')}`,
   study: `你是资深技术面试辅导老师。用户会给出简历、JD、JD 中的一条要求，以及面试官针对这条要求的追问。帮候选人准备这道追问。
 输出严格 JSON，格式为 {"concepts":[{"name":"概念名","explain":"解释"}],"approach":"回答思路"}：
 concepts：4-6 个回答这道追问必须讲清楚的相关领域概念，explain 用 2-3 句话说清是什么、面试常考什么；
@@ -109,7 +113,8 @@ function md(s) {
   return out.join('')
 }
 const gapOf = (tid, i) => target(tid)?.gaps[i]
-const reviewHTML = r => [['🎯 能否通过', r.verdict], ['⚠️ 薄弱回答', r.weak], ['✨ 更好的答法', r.better]]
+const reviewHTML = (r, saving) => [['🎯 能否通过', r.verdict], ['⚠️ 薄弱回答', r.weak], ['✨ 更好的答法', r.better],
+  ...(txt(r.missed) ? [['🔁 这场没答好', `${txt(r.missed)}${saving ? '\n（保存后这些条目会标记「模拟没答好」）' : '\n（这些条目已标记「模拟没答好」）'}`]] : [])]
   .map(([h, v]) => `<div class=card><b>${h}</b><pre>${esc(txt(v) || '（AI 没给出这一项）')}</pre></div>`).join('')
 
 // 巡检时间是北京时间字符串 "2026-11-02 10:31:41"
@@ -201,7 +206,7 @@ function renderJobs(btn) {
 }
 
 const gapCard = (t, g, i) => `<a class="card more gapc ${g.strength || 'none'}" href="#/g/${t.id}/${i}"><b>${icon(g)} ${esc(g.requirement)}</b>
-${g.evidence ? `<small>${esc(g.evidence)}</small>` : ''}<div class=probe>追问：${esc(g.probe)}</div>${g.study ? '<span class="pill ok">已准备</span>' : ''}</a>`
+${g.evidence ? `<small>${esc(g.evidence)}</small>` : ''}<div class=probe>追问：${esc(g.probe)}</div>${g.study ? '<span class="pill ok">已准备</span>' : ''}${g.failed ? `<span class="pill bad">模拟没答好 ×${g.failed}</span>` : ''}</a>`
 
 // 先列缺失和薄弱的（要重点准备），有力的折叠起来；链接仍用原始序号
 const targetPage = t => {
@@ -454,9 +459,9 @@ function endInterview() {
   stopVoice()
   withBusy(async () => {
     const transcript = iv.messages.map(m => (m.role === 'user' ? '候选人' : '面试官') + '：' + m.content).join('\n')
-    iv.review = await askJSON(P.review, transcript)
+    iv.review = await askJSON(P.review(iv.t), transcript)
     $('#controls').hidden = true
-    $('#review').innerHTML = `<h2>复盘</h2>${reviewHTML(iv.review)}
+    $('#review').innerHTML = `<h2>复盘</h2>${reviewHTML(iv.review, true)}
 <p>自评这一轮后保存：</p>${[1, 2, 3, 4, 5].map(n => `<button onclick="saveSession(${n})">${'★'.repeat(n)}</button>`).join('')}
 <button class=danger onclick="location.hash='#/t/${iv.t.id}'">丢弃</button>`
     $('#review').scrollIntoView()
@@ -464,6 +469,12 @@ function endInterview() {
 }
 
 const saveSession = rating => withBusy(async () => {
+  // 没答好的条目记一笔：g.failed 次数 + 最近时间，岗位页上会标「模拟没答好」，提示去重练
+  const missed = String(txt(iv.review?.missed) || '').split('\n').map(x => x.trim()).filter(Boolean)
+  for (const name of missed) {
+    const g = iv.t.gaps.find(g => g.requirement === name)
+    if (g) { g.failed = (g.failed || 0) + 1; g.failedAt = new Date().toISOString() }
+  }
   target(iv.t.id).sessions.push({ id: crypto.randomUUID(), date: new Date().toISOString(), messages: iv.messages, review: iv.review, rating })
   await save()
   location.hash = '#/t/' + iv.t.id
