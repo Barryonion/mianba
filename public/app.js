@@ -181,7 +181,7 @@ const jobCard = j => {
   const t = jobTarget(j)
   const mk = S.jobMarks?.[j.id]
   return `<div class=card id="job-${esc(j.id)}">
-<span class=pay>${esc(j.salary_desc)}</span>${j.score != null ? `<span class="sc ${j.score >= 75 ? 'ok' : j.score >= 50 ? 'warn' : ''}">${j.score}</span>` : ''}<b>${j.first_seen?.startsWith(today()) ? '<span class=new>新</span> ' : ''}${esc(j.job_name)}</b>
+<span class="pay ${j.salary_desc ? "" : "na"}">${esc(j.salary_desc || "面议")}</span>${j.score != null ? `<span class="sc ${j.score >= 75 ? 'ok' : j.score >= 50 ? 'warn' : ''}">${j.score}</span>` : ''}<b>${j.first_seen?.startsWith(today()) ? '<span class=new>新</span> ' : ''}${esc(j.job_name)}</b>
 <small>${esc(join([j.brand_name, j.brand_scale, j.brand_stage, j.brand_industry]))}</small>
 <small>${esc(join([join([j.area, j.business_area], ''), j.experience, j.degree, j.boss_name && join([j.boss_name, j.boss_title], ' ')]))}</small>
 ${j.skills ? `<div class=tags>${j.skills.split(',').slice(0, 10).map(s => `<span>${esc(s)}</span>`).join('')}</div>` : ''}
