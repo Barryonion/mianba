@@ -32,6 +32,14 @@
   .sc.ok { color: var(--ok); }
   .sc.warn { color: var(--warn); }
   .card .why { opacity: .75; }
+  .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; margin: 8px 0; }
+  .tile small { font-size: 13px; }
+  .tile b { font-size: 22px; font-variant-numeric: tabular-nums; }
+  .mrow { display: flex; align-items: center; gap: 8px; margin: 5px 0; font-size: 14px; }
+  .mlbl { flex: none; width: 7.5em; text-align: right; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; opacity: .85; }
+  .mtrack { flex: 1; height: 14px; border-radius: 4px; background: var(--card); overflow: hidden; }
+  .mfill { display: block; height: 100%; border-radius: 0 4px 4px 0; background: var(--accent); }
+  .mval { flex: none; min-width: 4.5em; opacity: .7; font-variant-numeric: tabular-nums; }
   .gapc { border-left: 3px solid var(--bad); }
   .gapc.weak { border-left-color: var(--warn); }
   .gapc.strong { border-left-color: var(--ok); }

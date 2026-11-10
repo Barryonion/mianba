@@ -140,6 +140,7 @@ const radar = () => {
   const last = J.reduce((a, j) => j.last_seen > a ? j.last_seen : a, '')
   const n = k => J.filter(VIEWS[k][1]).length
   return `<h2>岗位雷达 <small>共 ${J.length} 个，最近巡检 ${when(last)}</small></h2>
+<a class="row more" href="#/market">行情 <small>薪资分布、技能要求 TOP、区域和经验行情</small></a>
 <a class="row more" href="#/jobs">待看 ${todo.length} 个${fresh ? ` · <b class=new>今天新增 ${fresh}</b>` : ''}
 <div class=meta><span>⭐ 收藏 ${n('star')}</span><span>📮 已投递 ${n('applied')}</span><span>🙅 不合适 ${n('skip')}</span></div></a>`
 }
@@ -281,6 +282,7 @@ function route() {
   $('#app').innerHTML =
     page === 'resume' ? resumePage()
     : page === 'jobs' ? jobsPage()
+    : page === 'market' ? marketPage()
     : page === 'new' && S.resume ? newPage(id && J && J.find(j => j.id === decodeURIComponent(id)))
     : !t ? home()
     : page === 't' ? targetPage(t)
@@ -382,6 +384,43 @@ async function markJob(id, s) {
   route()
   scrollTo(0, y)
   try { await save() } catch (e) { alert('保存失败：' + e.message) }
+}
+
+// ---------- 行情：岗位库统计（单色横条，标签用文字色） ----------
+const topN = (d, n) => (Array.isArray(d) ? d : Object.entries(d).map(([k, v]) => [k, Array.isArray(v) ? v.length : v])).sort((a, b) => b[1] - a[1]).slice(0, n)
+const count = a => a.reduce((g, x) => (g[x] = (g[x] || 0) + 1, g), {})
+const pct = (a, p) => { if (!a.length) return null; const s = [...a].sort((x, y) => x - y); return s[Math.min(s.length - 1, Math.floor(p * (s.length - 1)))] }
+const med = a => { if (!a.length) return null; const s = [...a].sort((x, y) => x - y), m = s.length >> 1; return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2 }
+const tiles = a => `<div class=tiles>${a.map(([k, v]) => `<div class="card tile"><small>${k}</small><b>${v}</b></div>`).join('')}</div>`
+const bars = (rows, unit = '') => { const max = Math.max(...rows.map(r => r[1]), 1)
+  return rows.map(([k, v]) => `<div class=mrow><span class=mlbl title="${esc(k)}">${esc(k)}</span><span class=mtrack><span class=mfill style="width:${Math.max(2, Math.round(v / max * 100))}%"></span></span><span class=mval>${v}${unit}</span></div>`).join('') }
+const group = (m, key, val) => { const g = {}; for (const j of m) { const k = key(j) || '其他'; (g[k] ??= []).push(val(j)) } return g }
+
+const marketPage = () => {
+  if (J === null || J === false) return `${back('#/')}<h1>行情</h1><small>${J === null ? '加载中…' : '没有岗位数据'}</small>`
+  const m = J.filter(j => j.matched)
+  if (!m.length) return `${back('#/')}<h1>行情</h1><small>还没有符合条件的岗位</small>`
+  const pay = m.map(j => j.salary_max_k).filter(v => v != null)
+  const nm = m.length - pay.length
+  const bonus = m.map(j => (j.salary_desc || '').match(/·(\d+)薪/)?.[1]).filter(Boolean)
+  const bonusMode = topN(count(bonus), 1)[0]?.[0]
+  const expG = group(m, j => j.experience, j => j.salary_max_k)
+  const expRows = Object.entries(expG).map(([k, v]) => [k, v.length, med(v.filter(x => x != null))]).sort((a, b) => b[1] - a[1])
+  const skillG = group(m.flatMap(j => (j.skills || '').split(',').filter(Boolean).map(s => [s, j])), x => x[0], x => 1)
+  const skillRows = topN(Object.entries(skillG).map(([k, v]) => [k, v.length]), 15).map(([k, n]) => [k, n])
+  const areaRows = topN(Object.entries(group(m, j => [j.area, j.business_area].filter(Boolean).join('·'), () => 1)).map(([k, v]) => [k, v.length]), 8)
+  return `${back('#/')}<h1>行情 <small>符合条件 ${m.length} 个岗位</small></h1>
+${tiles([['薪资上限中位数', med(pay) ? med(pay) + 'K' : '—'], ['前 25%', (pct(pay, .75) ?? '—') + (pct(pay, .75) ? 'K' : '')], ['面议', nm ? nm + ' 个' : '无'], ['常见年终', bonusMode ? '·' + bonusMode + '薪' : '—']])}
+<h2>薪资上限分布</h2>
+${bars([['40-50K', pay.filter(v => v < 50).length], ['50-60K', pay.filter(v => v >= 50 && v < 60).length], ['60-70K', pay.filter(v => v >= 60 && v < 70).length], ['70-80K', pay.filter(v => v >= 70 && v < 80).length], ['80K+', pay.filter(v => v >= 80).length]], ' 个')}
+<h2>经验要求 <small>条后是薪资上限中位数</small></h2>
+${expRows.map(([k, n, md]) => `<div class=mrow><span class=mlbl>${esc(k)}</span><span class=mtrack><span class=mfill style="width:${Math.max(2, Math.round(n / expRows[0][1] * 100))}%"></span></span><span class=mval>${n} 个${md ? ' · ' + md + 'K' : ''}</span></div>`).join('')}
+<h2>技能要求 TOP15 <small>占符合条件岗位比例</small></h2>
+${bars(skillRows.map(([k, n]) => [k, Math.round(n / m.length * 100) + '%']), '')}
+<h2>区域分布</h2>
+${bars(areaRows, ' 个')}
+<h2>公司规模</h2>
+${bars(topN(Object.entries(group(m, j => j.brand_scale, () => 1)).map(([k, v]) => [k, v.length]), 6), ' 个')}`
 }
 
 // ---------- 差距详情：概念讲解 + 回答思路 + 追问 ----------
@@ -528,4 +567,4 @@ document.addEventListener('visibilitychange', () => {
 })
 load().then(route).catch(e => { $('#app').textContent = '连不上服务器：' + e.message })
 // 岗位数据单独拉，慢了也不挡首页
-loadJobs().then(() => { if (onHome() || location.hash.startsWith('#/jobs') || location.hash.startsWith('#/new/')) route() })
+loadJobs().then(() => { if (onHome() || /^#\/(jobs|new\/|market)/.test(location.hash)) route() })
