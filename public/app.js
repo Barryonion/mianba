@@ -33,8 +33,12 @@ async function withBusy(fn) {
 }
 
 // ---------- Prompts ----------
+// 项目档案：从公司机器的会话历史和仓库提取的「事实卡」，AI 回答只允许引用这里的真实细节
+const projectsBlock = () => S.projects?.length
+  ? `\n\n<项目档案（候选人的真实项目细节，回答时优先引用，档案里没有的数字不要编造）>\n${S.projects.map(p => `【${p.name}】\n${p.facts}`).join('\n\n')}\n</项目档案>`
+  : ''
 const P = {
-  material: t => `<候选人简历>\n${S.resume}\n</候选人简历>\n\n<岗位JD>\n${t.jd}\n</岗位JD>`,
+  material: t => `<候选人简历>\n${S.resume}\n</候选人简历>\n\n<岗位JD>\n${t.jd}\n</岗位JD>\n${projectsBlock()}`,
   gaps: `你是资深技术面试官。对照 JD 和候选人简历，拆出 JD 的 5-10 条核心要求，逐条判断简历能否证明。
 输出严格 JSON：{"gaps":[{"requirement":"JD 要求","evidence":"简历中能证明它的具体经历，没有就空字符串","strength":"strong|weak|none","probe":"面试官针对这一条最可能的追问，一句话"}]}
 只依据简历原文判断，不要替候选人脑补经历。`,
@@ -149,10 +153,47 @@ const home = () => `<h1>面霸</h1>
 ${radar()}
 <h2>我的简历</h2>
 <a class="row more" href="#/resume">${S.resume ? `已录入 ${S.resume.length} 字` : '还没有简历，点这里添加'}</a>
+<h2>项目档案 <small>${S.projects?.length || 0} 个</small></h2>
+<a class="row more" href="#/projects">${S.projects?.length ? S.projects.map(p => esc(p.name)).join('、') : '还没录入，点这里添加'}<small>真实项目细节，AI 回答和模拟面试会引用</small></a>
 <h2>目标岗位</h2>
 ${S.targets.map(t => { const c = tally(t); return `<a class="row more" href="#/t/${t.id}"><b>${esc(t.company)}</b> · ${esc(t.role)}
 <div class=meta>${pills(c)}<span>已准备 ${c.studied}/${t.gaps.length}</span><span>模拟 ${t.sessions.length} 次</span>${stageNow(t) ? `<span class="pill ${t.stages.at(-1).s === 'offer' ? 'ok' : ''}">${stageNow(t)}</span>` : ''}</div></a>` }).join('') || '<small>还没有目标岗位</small>'}
 ${S.resume ? '<a class="btn primary" href="#/new">＋ 新建目标岗位</a>' : ''}`
+
+const projectsPage = () => `${back('#/')}<h1>项目档案</h1>
+${S.projects?.map(p => `<a class="row more" href="#/p/${p.id}"><b>${esc(p.name)}</b><small>${esc((p.facts || '').slice(0, 60))}…</small></a>`).join('') || '<small>还没有项目档案。建议每个主力项目一张卡：背景、架构、你的职责、关键决策、量化数字、踩坑</small>'}
+<a class="btn primary" href="#/p/new">＋ 添加项目</a>`
+
+const projectPage = id => {
+  if (id === 'new') return `${back('#/projects')}<h1>添加项目</h1>
+<input id=pname placeholder="项目名，如：合伙云·结算服务"><textarea id=pfacts rows=20 placeholder="项目事实卡：背景、架构、我的职责、关键决策与权衡、量化数字、踩坑与排查"></textarea>
+<button class=primary onclick="saveProject()">保存</button>`
+  const p = S.projects?.find(x => x.id === id)
+  if (!p) return projectsPage()
+  return `${back('#/projects')}<h1>${esc(p.name)}</h1>
+<input id=pname value="${esc(p.name)}"><textarea id=pfacts rows=20>${esc(p.facts)}</textarea>
+<button class=primary onclick="saveProject('${p.id}')">保存</button>
+<button class=danger onclick="delProject('${p.id}')">删除</button>`
+}
+
+const saveProject = id => withBusy(async () => {
+  const name = $('#pname').value.trim(), facts = $('#pfacts').value.trim()
+  if (!name || !facts) return alert('项目名和事实卡都要填')
+  S.projects ??= []
+  if (id) Object.assign(S.projects.find(p => p.id === id), { name, facts })
+  else S.projects.push({ id: crypto.randomUUID(), name, facts })
+  await save()
+  location.hash = '#/projects'
+})
+
+const delProject = id => {
+  if (!confirm('删除这个项目档案？')) return
+  withBusy(async () => {
+    S.projects = S.projects.filter(p => p.id !== id)
+    await save()
+    location.hash = '#/projects'
+  })
+}
 
 const resumePage = () => `${back('#/')}<h1>我的简历</h1>
 <label class=btn>导入 PDF<input type=file accept=application/pdf hidden onchange="importPDF(this.files[0])"></label>
@@ -283,6 +324,8 @@ function route() {
     page === 'resume' ? resumePage()
     : page === 'jobs' ? jobsPage()
     : page === 'market' ? marketPage()
+    : page === 'projects' ? projectsPage()
+    : page === 'p' ? projectPage(id)
     : page === 'new' && S.resume ? newPage(id && J && J.find(j => j.id === decodeURIComponent(id)))
     : !t ? home()
     : page === 't' ? targetPage(t)
