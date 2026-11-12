@@ -35,17 +35,19 @@ async function bark(title, body, url, level = "active") {
   }
 
   if (process.argv[2] === "question") {
-    // 候选：所有非 strong 的差距条目，按目标岗位顺序排，轮着来，不连续重复
-    const all = (S.targets || []).flatMap((t) => t.gaps.map((g, i) => ({ t, g, i })).filter((x) => x.g.strength !== "strong" && x.g.probe));
-    if (!all.length) return console.log("question: 没有薄弱项，跳过");
-    const key = (x) => `${x.t.id}:${x.i}`;
+    // 候选池：薄弱项的追问 + 领域卡的建模题，轮着来，不连续重复
+    const all = (S.targets || []).flatMap((t) => t.gaps.map((g, i) => ({ t, g, i })).filter((x) => x.g.strength !== "strong" && x.g.probe))
+      .map((x) => ({ key: `${x.t.id}:${x.i}`, title: `每日一题 · ${x.t.company}`, body: `追问：${x.g.probe}`, url: `${MIANBA_URL}/#/g/${x.t.id}/${x.i}` }))
+      .concat((S.domains || []).flatMap((d) => String(d.quiz || "").split("\n").map((s) => s.trim().replace(/^[-•]\s*/, "")).filter(Boolean)
+        .map((q) => ({ key: `dom:${d.id}:${q.slice(0, 20)}`, title: `每日建模题 · ${d.name}`, body: q, url: `${MIANBA_URL}/#/d/${d.id}` }))));
+    if (!all.length) return console.log("question: 没有候选，跳过");
     const last = fs.existsSync(LAST) ? fs.readFileSync(LAST, "utf8").trim() : "";
-    const pos = Math.max(0, all.findIndex((x) => key(x) === last));
+    const pos = Math.max(0, all.findIndex((x) => x.key === last));
     const pick = all[(pos + 1) % all.length];
-    await bark(`每日一题 · ${pick.t.company}`, `追问：${pick.g.probe}`, `${MIANBA_URL}/#/g/${pick.t.id}/${pick.i}`);
+    await bark(pick.title, pick.body, pick.url);
     fs.mkdirSync("/var/lib/ops", { recursive: true });
-    fs.writeFileSync(LAST, key(pick));
-    console.log(`question: ${pick.t.company} / ${pick.g.requirement}`);
+    fs.writeFileSync(LAST, pick.key);
+    console.log(`question: ${pick.title} / ${pick.body.slice(0, 40)}`);
     return;
   }
   throw new Error("用法：node daily.js remind|question");

@@ -40,7 +40,7 @@ const projectsBlock = () => S.projects?.length
 const P = {
   material: t => `<候选人简历>\n${S.resume}\n</候选人简历>\n\n<岗位JD>\n${t.jd}\n</岗位JD>\n${projectsBlock()}`,
   gaps: `你是资深技术面试官。对照 JD 和候选人简历，拆出 JD 的 5-10 条核心要求，逐条判断简历能否证明。
-输出严格 JSON：{"gaps":[{"requirement":"JD 要求","evidence":"简历中能证明它的具体经历，没有就空字符串","strength":"strong|weak|none","probe":"面试官针对这一条最可能的追问，一句话"}]}
+输出严格 JSON：{"gaps":[{"requirement":"JD 要求","evidence":"简历中能证明它的具体经历，没有就空字符串","strength":"strong|weak|none","probe":"面试官针对这一条最可能的追问，一句话"}],"domains":"这个岗位涉及的业务领域，每行一个，共 3-6 个，如：支付结算、订单履约、身份权限、库存调度、风控、数据同步、营销优惠。只写领域名"}
 只依据简历原文判断，不要替候选人脑补经历。`,
   tailor: `你是简历顾问。用户会给出<候选人简历>和<岗位JD>，请按 JD 改写这份简历：可以调整顺序、改措辞、突出和 JD 相关的经历、删掉无关内容。
 绝对不能新增简历里没有的事实、数字、技术栈或经历。
@@ -79,6 +79,22 @@ ${P.material(t)}
 ${g.requirement}
 简历证据：${g.evidence || '无'}
 面试官追问：${g.probe}`,
+  domainGen: `你是资深架构师和面试辅导。为指定的业务领域写一张「领域建模知识卡」，纯 markdown、控制在 1200 字内，固定四段：
+## 核心概念与实体关系
+主要实体、聚合/模块怎么划分、关键状态机或账务口径
+## 常见建模套路
+该领域通用的设计方案与取舍；候选人项目档案里有真实实践的必须标注「↩ 你项目的实践：<对应做法>」
+## 面试常见建模题
+5 道，每行以「- 」开头，一行一道
+## 通用陷阱
+幂等、并发、对账、越权等该领域高频翻车点
+只引用项目档案里真实存在的实践，档案里没有的不标。`,
+  drill: d => `你是资深架构师面试官，考察候选人「${d.name}」领域的系统建模能力。中文。
+先出一道真实感的建模设计题（参考下面的知识卡，不要与对话里出过的重复），一句话场景即可；候选人给方案后，就并发、幂等、一致性、扩展性中最薄弱处追问 2-3 层；追问完再点评（好的地方、漏洞、更优方案）。每次只提一个问题，不要自己给答案。
+
+<领域知识卡>
+${d.facts || '（还没有知识卡内容）'}
+</领域知识卡>${projectsBlock()}`,
   greeting: '你好，我是今天的面试官。先做个简单的自我介绍吧，重点讲讲和这个岗位相关的经历。',
 }
 
@@ -155,10 +171,34 @@ ${radar()}
 <a class="row more" href="#/resume">${S.resume ? `已录入 ${S.resume.length} 字` : '还没有简历，点这里添加'}</a>
 <h2>项目档案 <small>${S.projects?.length || 0} 个</small></h2>
 <a class="row more" href="#/projects">${S.projects?.length ? S.projects.map(p => esc(p.name)).join('、') : '还没录入，点这里添加'}<small>真实项目细节，AI 回答和模拟面试会引用</small></a>
+<h2>领域建模 <small>${S.domains?.length || 0} 张卡</small></h2>
+<a class="row more" href="#/domains">${S.domains?.length ? S.domains.map(d => esc(d.name)).join('、') : '还没有，去目标岗位识别领域后生成'}<small>建模方法论＋你项目的真实实践＋建模题</small></a>
 <h2>目标岗位</h2>
 ${S.targets.map(t => { const c = tally(t); return `<a class="row more" href="#/t/${t.id}"><b>${esc(t.company)}</b> · ${esc(t.role)}
 <div class=meta>${pills(c)}<span>已准备 ${c.studied}/${t.gaps.length}</span><span>模拟 ${t.sessions.length} 次</span>${stageNow(t) ? `<span class="pill ${t.stages.at(-1).s === 'offer' ? 'ok' : ''}">${stageNow(t)}</span>` : ''}</div></a>` }).join('') || '<small>还没有目标岗位</small>'}
 ${S.resume ? '<a class="btn primary" href="#/new">＋ 新建目标岗位</a>' : ''}`
+
+const domainsPage = () => `${back('#/')}<h1>领域建模</h1>
+${S.domains?.map(d => `<a class="row more" href="#/d/${d.id}"><b>${esc(d.name)}</b><small>${(d.quiz || '').split('\n').filter(Boolean).length} 道建模题 · 对话 ${(d.chat || []).length} 条</small></a>`).join('') || '<small>还没有领域卡。到目标岗位页「从 JD 识别领域」后生成，或直接添加</small>'}
+<a class="btn primary" href="#/d/new">＋ 添加领域</a>`
+
+const domainPage = id => {
+  if (id === 'new') return `${back('#/domains')}<h1>添加领域</h1>
+<input id=dname placeholder="领域名，如：账务结算"><textarea id=dfacts rows=16 placeholder="知识卡内容，可留空后用「生成知识卡」"></textarea>
+<button class=primary onclick="addDomain()">保存</button>`
+  const d = S.domains?.find(x => x.id === id)
+  if (!d) return domainsPage()
+  return `${back('#/domains')}<h1>${esc(d.name)}</h1>
+<div class="card md">${d.facts ? md(d.facts) : '<small>还没有内容</small>'}</div>
+<button onclick="genDomainCard('${d.id}')">${d.facts ? '重新生成知识卡' : '生成知识卡'}</button>
+<details><summary>编辑</summary><textarea id=dfacts rows=16>${esc(d.facts || '')}</textarea><button onclick="saveDomainFacts('${d.id}')">保存</button></details>
+<h2>考我 <small>AI 出建模题，答完追问再点评</small>${d.chat?.length ? `<button class="link danger" onclick="clearDrill('${d.id}')">清空对话</button>` : ''}</h2>
+<div id=chat>${(d.chat || []).map(m => m.role === 'user' ? `<div class="msg user">${esc(m.content)}</div>` : `<div class="msg assistant md">${md(m.content)}</div>`).join('') || '<small>点「出一道建模题」开始</small>'}</div>
+<div class=composer>
+<div class=chips><button class=chip onclick="askDrill('${d.id}', '出一道建模题')">出一道建模题</button><button class=chip onclick="askDrill('${d.id}', '换一道更难或更偏工程落地的')">换一道难的</button></div>
+<div class=bar><textarea id=answer rows=1 placeholder="答它出的题，或直接描述你的方案让它点评" oninput="grow(this)"></textarea><button class=primary onclick="askDrillSend('${d.id}')">发送</button></div>
+</div>`
+}
 
 const projectsPage = () => `${back('#/')}<h1>项目档案</h1>
 ${S.projects?.map(p => `<a class="row more" href="#/p/${p.id}"><b>${esc(p.name)}</b><small>${esc((p.facts || '').slice(0, 60))}…</small></a>`).join('') || '<small>还没有项目档案。建议每个主力项目一张卡：背景、架构、你的职责、关键决策、量化数字、踩坑</small>'}
@@ -267,6 +307,11 @@ ${t.stages?.length ? t.stages.slice().reverse().map(e => `<div class=card><b>${S
 <h2>重点准备 <small>点进去看相关概念、回答思路，和 AI 练追问</small></h2>
 ${todo.map(x => gapCard(t, x.g, x.i)).join('') || '<small>没有薄弱项</small>'}
 ${done.length ? `<details class=fold><summary>✅ 简历能证明的 ${done.length} 条</summary>${done.map(x => gapCard(t, x.g, x.i)).join('')}</details>` : ''}
+<h2>领域建模 <small>面试官爱考「让你设计一个 X」</small></h2>
+${(t.domains || []).map((n, i) => { const d = S.domains?.find(x => x.name === n)
+  return d ? `<a class="card more" href="#/d/${d.id}"><b>${esc(n)}</b><small>已有知识卡，点进去复习或「考我」</small></a>`
+    : `<div class=card><b>${esc(n)}</b><button class=btn onclick="genDomainFromTarget('${t.id}', ${i})">生成知识卡</button></div>` }).join('') || '<small>还没识别这个岗位涉及的领域</small>'}
+<button onclick="detectDomains('${t.id}')">${t.domains?.length ? '重新识别领域' : '从 JD 识别领域'}</button>
 <h2>定制简历</h2>
 ${t.tailored ? `<details><summary>查看定制版</summary><pre>${esc(t.tailored)}</pre><button onclick="copyTailored('${t.id}')">复制</button></details>` : ''}
 <button onclick="tailor('${t.id}')">${t.tailored ? '重新生成' : '按 JD 生成定制简历'}</button>
@@ -326,6 +371,8 @@ function route() {
     : page === 'market' ? marketPage()
     : page === 'projects' ? projectsPage()
     : page === 'p' ? projectPage(id)
+    : page === 'domains' ? domainsPage()
+    : page === 'd' ? domainPage(id)
     : page === 'new' && S.resume ? newPage(id && J && J.find(j => j.id === decodeURIComponent(id)))
     : !t ? home()
     : page === 't' ? targetPage(t)
@@ -370,7 +417,9 @@ function analyze() {
   withBusy(async () => {
     const t = { id: crypto.randomUUID(), company, role, jd, gaps: [], tailored: '', intel: '', sessions: [],
       ...(page === 'new' && jobId && { jobId: decodeURIComponent(jobId) }) }
-    t.gaps = (await askJSON(P.gaps, P.material(t))).gaps
+    const r = await askJSON(P.gaps, P.material(t))
+    t.gaps = r.gaps
+    t.domains = String(txt(r.domains) || '').split('\n').map(x => x.trim().replace(/^[-•\d.、]+\s*/, '')).filter(Boolean).slice(0, 6)
     S.targets.push(t)
     await save()
     location.hash = '#/t/' + t.id
@@ -417,6 +466,81 @@ const addStage = (tid, s) => withBusy(async () => {
   await save()
   route()
 })
+
+// ---------- 领域建模 ----------
+const domOf = id => S.domains?.find(x => x.id === id)
+// 知识卡的「面试常见建模题」段抽出来当题库（到下一个 ## 为止，避免混入通用陷阱）
+const quizOf = facts => { const seg = String(facts).split('面试常见建模题')[1]?.split('##')[0] || ''
+  return seg.split('\n').map(x => x.trim()).filter(x => x.startsWith('- ')).map(x => x.slice(2)).join('\n') }
+
+function detectDomains(tid) {
+  withBusy(async () => {
+    const t = target(tid)
+    const r = await chat('从下面的 JD 提取 3-6 个业务领域名（如：支付结算、订单履约、身份权限、库存调度、风控、数据同步、营销优惠）。每行一个，只写领域名，不要编号和解释。', [{ role: 'user', content: t.jd }])
+    t.domains = r.split('\n').map(x => x.trim().replace(/^[-•\d.、]+\s*/, '')).filter(Boolean).slice(0, 6)
+    await save()
+    route()
+  })
+}
+
+// withBusy 不能嵌套（内层会被 busy 守卫静默吞掉），生成走不带守卫的 genDomainCardInner
+const genDomainCardInner = async (id) => {
+  const d = domOf(id)
+  d.facts = await chat(P.domainGen, [{ role: 'user', content: `领域：${d.name}${projectsBlock()}` }])
+  d.quiz = quizOf(d.facts)
+  await save()
+}
+
+const genDomainCard = id => withBusy(() => genDomainCardInner(id))
+
+const genDomainFromTarget = (tid, i) => withBusy(async () => {
+  const t = target(tid)
+  S.domains ??= []
+  const d = { id: crypto.randomUUID(), name: t.domains[i], facts: '', quiz: '', chat: [] }
+  S.domains.push(d)
+  await save()
+  await genDomainCardInner(d.id)
+  location.hash = '#/d/' + d.id
+})
+
+const addDomain = () => withBusy(async () => {
+  const name = $('#dname').value.trim()
+  if (!name) return alert('领域名要填')
+  S.domains ??= []
+  const facts = $('#dfacts').value.trim()
+  S.domains.push({ id: crypto.randomUUID(), name, facts, quiz: quizOf(facts), chat: [] })
+  await save()
+  location.hash = '#/domains'
+})
+
+const saveDomainFacts = id => withBusy(async () => {
+  const d = domOf(id)
+  d.facts = $('#dfacts').value.trim()
+  d.quiz = quizOf(d.facts)
+  await save()
+  route()
+})
+
+function askDrillSend(id) {
+  const text = $('#answer').value.trim()
+  if (!text || busy) return
+  askDrill(id, text)
+}
+function askDrill(id, text) {
+  withBusy(async () => {
+    const d = domOf(id)
+    const messages = [...(d.chat || []), { role: 'user', content: text }]
+    const reply = await chat(P.drill(d), messages)
+    domOf(id).chat = [...messages, { role: 'assistant', content: reply }]
+    await save()
+    route()
+    $('#chat').lastElementChild?.previousElementSibling?.scrollIntoView({ block: 'start' })
+  })
+}
+function clearDrill(id) {
+  if (!confirm('清空这个领域的对话？')) return
+  withBusy(async () => { domOf(id).chat = []; await save(); route() })
+}
 
 // 再点一次同一个标记就取消；标完只重画列表，当前位置不跳
 async function markJob(id, s) {
