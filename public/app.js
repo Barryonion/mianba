@@ -29,7 +29,10 @@ async function withBusy(fn) {
   if (busy) return
   busy = true
   document.body.classList.add('busy')
-  try { await fn() } catch (e) { alert(e.message) } finally { busy = false; document.body.classList.remove('busy') }
+  // 挂个秒数计时：长回答时能看出还在跑，不是卡死
+  const t0 = Date.now()
+  const tick = setInterval(() => { const el = $('#busysec'); if (el) el.textContent = Math.round((Date.now() - t0) / 1000) + ' s' }, 1000)
+  try { await fn() } catch (e) { alert(e.message) } finally { busy = false; clearInterval(tick); document.body.classList.remove('busy') }
 }
 
 // ---------- Prompts ----------
