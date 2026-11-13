@@ -4,6 +4,7 @@ const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': 
 const txt = v => Array.isArray(v) ? v.join('\n') : v // AI 偶尔把字符串字段返回成数组
 
 let S = { resume: '', targets: [] }
+let ready = false // state 没加载完不渲染，避免空状态闪现（这个窗口期保存会把数据清空）
 let busy = false
 let J = null // 岗位雷达：null 加载中，false 服务器没接巡检数据
 const jf = { view: 'todo', sort: 'new', q: '' }
@@ -103,6 +104,7 @@ ${d.facts || '（还没有知识卡内容）'}
 
 // ---------- 页面 ----------
 // 顶部吸顶返回栏，滚动长页面时随时能回去
+const loading = (t = '加载中…') => `<div class=loading><span class=spin></span><small>${esc(t)}</small></div>`
 const back = (href, label = '返回') => `<div class=top><a href="${href}">‹ ${esc(label)}</a></div>`
 // 差距分析计数：✅ 有力 ⚠️ 薄弱 ❌ 缺失，外加已准备（生成过概念讲解）的条数
 const tally = t => ({ strong: t.gaps.filter(g => g.strength === 'strong').length, weak: t.gaps.filter(g => g.strength === 'weak').length,
@@ -255,7 +257,7 @@ ${j && !j.jd ? `<a class=btn href="${esc(safeUrl(j.url))}" target=_blank rel=noo
 <button class=primary onclick="analyze()">分析差距</button>`
 
 const jobsPage = () => `${back('#/')}<h1>岗位雷达</h1>
-${J === null ? '<small>加载中…</small>' : J === false ? '<small>服务器没接巡检数据（JOBS_DB）</small>' : `
+${J === null ? loading() : J === false ? '<small>服务器没接巡检数据（JOBS_DB）</small>' : `
 <input id=jq type=search placeholder="搜公司 / 职位 / 技能 / 区域 / 职位描述" value="${esc(jf.q)}" oninput="jf.q = this.value; renderJobs()">
 <div class=chips>${Object.entries(VIEWS).map(([k, [name, f]]) => `<button class="chip ${jf.view === k ? 'on' : ''}" onclick="jf.view = '${k}'; renderJobs(this)">${name} ${J.filter(f).length}</button>`).join('')}</div>
 <div class=chips><button class="chip ${jf.sort === 'new' ? 'on' : ''}" onclick="jf.sort = 'new'; renderJobs(this)">按发现时间</button><button class="chip ${jf.sort === 'pay' ? 'on' : ''}" onclick="jf.sort = 'pay'; renderJobs(this)">按薪资上限</button><button class="chip ${jf.sort === 'score' ? 'on' : ''}" onclick="jf.sort = 'score'; renderJobs(this)">按匹配度</button></div>
@@ -365,6 +367,7 @@ const sessionPage = (t, sid) => {
 }
 
 function route() {
+  if (!ready) return
   stopVoice()
   const [, page = '', id, sub] = location.hash.split('/')
   const t = id && target(id)
@@ -567,7 +570,7 @@ const bars = (rows, unit = '') => { const max = Math.max(...rows.map(r => r[1]),
 const group = (m, key, val) => { const g = {}; for (const j of m) { const k = key(j) || '其他'; (g[k] ??= []).push(val(j)) } return g }
 
 const marketPage = () => {
-  if (J === null || J === false) return `${back('#/')}<h1>行情</h1><small>${J === null ? '加载中…' : '没有岗位数据'}</small>`
+  if (J === null || J === false) return `${back('#/')}<h1>行情</h1>${J === null ? loading() : '<small>没有岗位数据</small>'}`
   const m = J.filter(j => j.matched)
   if (!m.length) return `${back('#/')}<h1>行情</h1><small>还没有符合条件的岗位</small>`
   const pay = m.map(j => j.salary_max_k).filter(v => v != null)
@@ -735,6 +738,8 @@ document.addEventListener('visibilitychange', () => {
   load().then(() => { if (onHome()) route() })
   loadJobs().then(() => { if (onHome()) route(); else renderJobs() })
 })
-load().then(route).catch(e => { $('#app').textContent = '连不上服务器：' + e.message })
+load().then(() => { ready = true; route() }).catch(e => {
+  $('#app').innerHTML = `<div class=loading><span class=spin></span><small>连不上服务器：${esc(e.message)}</small><button class=btn onclick="location.reload()">重试</button></div>`
+})
 // 岗位数据单独拉，慢了也不挡首页
 loadJobs().then(() => { if (onHome() || /^#\/(jobs|new\/|market)/.test(location.hash)) route() })

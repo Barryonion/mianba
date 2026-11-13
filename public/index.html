@@ -108,14 +108,16 @@
              box-shadow: 0 4px 16px rgba(0,0,0,.15); opacity: 0; visibility: hidden;
              transform: translateX(-50%) translateY(8px); transition: opacity .2s, transform .2s, visibility .2s; }
   body.busy #busybar { opacity: 1; visibility: visible; transform: translateX(-50%) translateY(0); }
-  #busybar .spin { width: 16px; height: 16px; border-radius: 50%; flex: none;
-                   border: 2px solid var(--line); border-top-color: var(--accent); animation: bspin .8s linear infinite; }
+  .spin { width: 16px; height: 16px; border-radius: 50%; flex: none;
+         border: 2px solid var(--line); border-top-color: var(--accent); animation: bspin .8s linear infinite; }
   @keyframes bspin { to { transform: rotate(360deg); } }
   #busybar b { font-variant-numeric: tabular-nums; }
+  .loading { display: grid; place-items: center; gap: 12px; padding: 56px 0; opacity: .85; }
+  .loading .spin { width: 24px; height: 24px; border-width: 3px; }
 </style>
 </head>
 <body>
-<div id="app">加载中…</div>
+<div id="app"><div class=loading><span class=spin></span><small>加载中…</small></div></div>
 <div id=busybar><span class=spin></span>AI 思考中 <b id=busysec></b></div>
 <script src="/app.js"></script>
 </body>
