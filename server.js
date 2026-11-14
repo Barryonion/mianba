@@ -11,7 +11,7 @@ const LLM_MODEL = process.env.LLM_MODEL || 'glm-5.3'
 const DATA = path.join(__dirname, 'data')
 const STATE = path.join(DATA, 'state.json')
 const PUBLIC = path.join(__dirname, 'public')
-const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.json': 'application/json', '.svg': 'image/svg+xml' }
+const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.json': 'application/json', '.svg': 'image/svg+xml', '.png': 'image/png' }
 
 fs.mkdirSync(DATA, { recursive: true })
 

@@ -14,8 +14,14 @@ if [ "$h" -ge 10 ] && [ "$h" -lt 23 ]; then
   [ "$age" -gt 120 ] && msg="${msg}巡检已经 ${age} 分钟没成功完成一轮（最近 ${last}）；"
 fi
 
-bark() { curl -s -m 15 -o /dev/null -X POST "https://api.day.app/$BARK_KEY" -H 'Content-Type: application/json; charset=utf-8' \
-  -d "{\"title\":\"$1\",\"body\":\"$2\",\"group\":\"watchdog\",\"level\":\"$3\"}"; }
+# Bark 发 iPhone，NTFY_TOPIC 配了再发一份到安卓
+bark() {
+  [ -n "$BARK_KEY" ] && curl -s -m 15 -o /dev/null -X POST "https://api.day.app/$BARK_KEY" -H 'Content-Type: application/json; charset=utf-8' \
+    -d "{\"title\":\"$1\",\"body\":\"$2\",\"group\":\"watchdog\",\"level\":\"$3\"}"
+  [ -n "$NTFY_TOPIC" ] && curl -s -m 15 -o /dev/null -X POST "https://ntfy.sh/$NTFY_TOPIC" -H 'Content-Type: application/json; charset=utf-8' \
+    -d "{\"topic\":\"$NTFY_TOPIC\",\"title\":\"$1\",\"message\":\"$2\"}"
+  [ -n "$BARK_KEY$NTFY_TOPIC" ] || echo "BARK_KEY 和 NTFY_TOPIC 都没配"
+}
 
 if [ -n "$msg" ]; then
   echo "异常：$msg"

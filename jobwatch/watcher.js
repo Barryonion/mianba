@@ -16,17 +16,16 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const rand = (a, b) => a + Math.random() * (b - a);
 
 async function bark(title, body, url) {
-  if (!CONFIG.barkKey) return LOG("[bark 未配置]", title, body);
-  try {
-    const res = await fetch(`https://api.day.app/${CONFIG.barkKey}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json; charset=utf-8" },
-      body: JSON.stringify({ title, body, url, group: "jobwatch" }),
-    });
-    if (!res.ok) LOG("bark 失败", res.status);
-  } catch (e) {
-    LOG("bark 异常", e.message);
-  }
+  // Bark 发 iPhone；ntfyTopic 配了再发一份到安卓的 ntfy
+  const send = async (endpoint, payload) => {
+    try {
+      const res = await fetch(endpoint, { method: "POST", headers: { "Content-Type": "application/json; charset=utf-8" }, body: JSON.stringify(payload) });
+      if (!res.ok) LOG("推送失败", endpoint.split("/")[2], res.status);
+    } catch (e) { LOG("推送异常", e.message) }
+  };
+  if (!CONFIG.barkKey && !CONFIG.ntfyTopic) return LOG("[bark/ntfy 未配置]", title, body);
+  if (CONFIG.barkKey) await send(`https://api.day.app/${CONFIG.barkKey}`, { title, body, url, group: "jobwatch" });
+  if (CONFIG.ntfyTopic) await send(`https://ntfy.sh/${CONFIG.ntfyTopic}`, { topic: CONFIG.ntfyTopic, title, message: body, click: url, tags: ["briefcase"] });
 }
 
 // "30-45K·15薪" -> 45；"面议"等解析不了的返回 null（保留，交给人判断）
@@ -79,6 +78,9 @@ async function scanQuery(page, query) {
     if (/verify|security-check/.test(cur)) return { blocked: "遇到安全验证" };
     if (/login/.test(cur)) return { blocked: "登录已失效" };
     if (!pages.length) return { blocked: "没拿到岗位列表（页面结构可能变了）" };
+    // 游客态：登录失效时 BOSS 不跳登录页，只给 15 条且不再翻页，页面上有「查看更多好职位」的登录提示
+    if (await page.getByText("查看更多好职位").count().catch(() => 0))
+      return { blocked: "登录已失效（页面提示登录后查看更多）" };
     if (pages[0].code !== 0) return { blocked: `接口返回 code=${pages[0].code} ${pages[0].message || ""}` };
 
     let idle = 0;

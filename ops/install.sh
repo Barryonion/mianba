@@ -14,7 +14,7 @@ ssh $host 'set -e
 chmod +x /opt/ops/*.sh
 if [ ! -f /etc/ops.env ]; then
   K=$(python3 -c "import json;print(json.load(open(\"/opt/jobwatch/config.json\"))[\"barkKey\"])")
-  (umask 077; printf "BARK_KEY=%s\nGH_USER=Barryonion\n# GH_TOKEN=  可选：GitHub 只读 token，填上后私有仓库的提交也算\n" "$K" > /etc/ops.env)
+  (umask 077; printf "BARK_KEY=%s\nGH_USER=Barryonion\n# GH_TOKEN=  可选：GitHub 只读 token，填上后私有仓库的提交也算\n# NTFY_TOPIC=  可选：安卓 ntfy 的 topic，填上后推送同时发 Pixel\n" "$K" > /etc/ops.env)
 fi
 svc() { cat > /etc/systemd/system/$1.service <<EOT
 [Unit]

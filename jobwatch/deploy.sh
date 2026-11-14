@@ -15,8 +15,11 @@ ssh $host 'set -e
 cd /opt/jobwatch
 export DEBIAN_FRONTEND=noninteractive
 dpkg -s xvfb x11vnc fluxbox fonts-noto-cjk >/dev/null 2>&1 || apt-get install -y -qq xvfb x11vnc fluxbox fonts-noto-cjk >/dev/null
-npm install --no-audit --no-fund --registry=https://registry.npmmirror.com >/dev/null
-PLAYWRIGHT_DOWNLOAD_HOST=https://npmmirror.com/mirrors/playwright npx patchright install chromium >/dev/null
+# 依赖已在就跳过 npm install（服务器 npm 抽风，patchright 装好后不必每次重装）
+[ -d node_modules/patchright ] || npm install --no-audit --no-fund --registry=https://registry.npmmirror.com >/dev/null
+# Chromium 已装（~/.cache/ms-playwright 下有 chrome 可执行文件）就跳过 npx（服务器 npm 不稳）
+ls /root/.cache/ms-playwright/chromium-*/chrome-linux*/chrome >/dev/null 2>&1 || \
+  PLAYWRIGHT_DOWNLOAD_HOST=https://npmmirror.com/mirrors/playwright npx patchright install chromium >/dev/null
 [ -f config.json ] || { cp config.example.json config.json; echo "已生成 /opt/jobwatch/config.json，记得填 barkKey" >&2; }
 
 # 远程桌面密码：没有就随机生成一个，明文存在 /root/.vnc/plain（权限 600）

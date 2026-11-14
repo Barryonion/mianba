@@ -3,16 +3,27 @@
 //   question 每天 12:30：从薄弱项里轮着挑一条追问当每日一题，点开直达差距详情页
 // 配置在 /etc/ops.env：BARK_KEY、MIANBA_URL（如 https://xxx.ts.net）
 const fs = require("fs");
-const { BARK_KEY, MIANBA_URL } = process.env;
+const { BARK_KEY, NTFY_TOPIC, MIANBA_URL } = process.env;
 const STATE = "/opt/mianba/data/state.json";
 const LAST = "/var/lib/ops/daily-question.last";
 
 async function bark(title, body, url, level = "active") {
-  const r = await fetch(`https://api.day.app/${BARK_KEY}`, {
-    method: "POST", headers: { "Content-Type": "application/json; charset=utf-8" },
-    body: JSON.stringify({ title, body, url, group: "daily", level }),
-  });
-  if (!r.ok) throw new Error(`Bark ${r.status}`);
+  // Bark 发 iPhone，NTFY_TOPIC 配了再发一份到安卓
+  if (BARK_KEY) {
+    const r = await fetch(`https://api.day.app/${BARK_KEY}`, {
+      method: "POST", headers: { "Content-Type": "application/json; charset=utf-8" },
+      body: JSON.stringify({ title, body, url, group: "daily", level }),
+    });
+    if (!r.ok) throw new Error(`Bark ${r.status}`);
+  }
+  if (NTFY_TOPIC) {
+    const r = await fetch(`https://ntfy.sh/${NTFY_TOPIC}`, {
+      method: "POST", headers: { "Content-Type": "application/json; charset=utf-8" },
+      body: JSON.stringify({ topic: NTFY_TOPIC, title, message: body, click: url }),
+    });
+    if (!r.ok) throw new Error(`ntfy ${r.status}`);
+  }
+  if (!BARK_KEY && !NTFY_TOPIC) throw new Error("BARK_KEY 和 NTFY_TOPIC 都没配");
 }
 
 (async () => {

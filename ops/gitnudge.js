@@ -1,7 +1,7 @@
 // 每日提交提醒：查 GH_USER 今天（北京时间）在 GitHub 上的提交，用 Bark 推送结果。
 // 用法：node nudge.js            每天固定推一条：有提交报数，没提交提醒
 //       node nudge.js --if-none  只在还没提交时提醒（睡前补一次）
-const { BARK_KEY, GH_USER, GH_TOKEN } = process.env;
+const { BARK_KEY, NTFY_TOPIC, GH_USER, GH_TOKEN } = process.env;
 const ifNone = process.argv.includes("--if-none");
 const headers = { Accept: "application/vnd.github+json", "User-Agent": "gitnudge", ...(GH_TOKEN && { Authorization: `Bearer ${GH_TOKEN}` }) };
 const day = new Date().toLocaleString("sv-SE", { timeZone: "Asia/Shanghai" }).slice(0, 10);
@@ -14,12 +14,23 @@ async function gh(path) {
 }
 
 async function bark(title, body, level = "active") {
-  const r = await fetch(`https://api.day.app/${BARK_KEY}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json; charset=utf-8" },
-    body: JSON.stringify({ title, body, group: "gitnudge", level, url: `https://github.com/${GH_USER}` }),
-  });
-  if (!r.ok) throw new Error(`Bark ${r.status}`);
+  // Bark 发 iPhone，NTFY_TOPIC 配了再发一份到安卓
+  const url = `https://github.com/${GH_USER}`;
+  if (BARK_KEY) {
+    const r = await fetch(`https://api.day.app/${BARK_KEY}`, {
+      method: "POST", headers: { "Content-Type": "application/json; charset=utf-8" },
+      body: JSON.stringify({ title, body, group: "gitnudge", level, url }),
+    });
+    if (!r.ok) throw new Error(`Bark ${r.status}`);
+  }
+  if (NTFY_TOPIC) {
+    const r = await fetch(`https://ntfy.sh/${NTFY_TOPIC}`, {
+      method: "POST", headers: { "Content-Type": "application/json; charset=utf-8" },
+      body: JSON.stringify({ topic: NTFY_TOPIC, title, message: body, click: url }),
+    });
+    if (!r.ok) throw new Error(`ntfy ${r.status}`);
+  }
+  if (!BARK_KEY && !NTFY_TOPIC) throw new Error("BARK_KEY 和 NTFY_TOPIC 都没配");
 }
 
 (async () => {
