@@ -15,7 +15,16 @@
           --ok: #30d158; --warn: #ffd60a; --bad: #ff453a; --bar: color-mix(in srgb, Canvas 82%, transparent); }
   * { box-sizing: border-box; }
   body { font: 16px/1.5 -apple-system, system-ui, sans-serif; margin: 0 auto; max-width: 760px;
-         padding: env(safe-area-inset-top) 16px 40px; }
+         padding: env(safe-area-inset-top) 16px calc(100px + env(safe-area-inset-bottom)); }
+  body.notabs { padding-bottom: 40px; }
+  #tabs { position: fixed; left: 0; right: 0; bottom: 0; z-index: 15; display: flex; justify-content: space-around;
+          padding: 4px 0 calc(4px + env(safe-area-inset-bottom)); background: var(--bar);
+          -webkit-backdrop-filter: blur(16px); backdrop-filter: blur(16px); border-top: 1px solid var(--line); }
+  #tabs a { display: grid; place-items: center; gap: 1px; font-size: 11px; color: inherit; opacity: .5; padding: 3px 14px; }
+  #tabs a .ico { font-size: 20px; }
+  #tabs a.on { opacity: 1; color: var(--accent); }
+  body.notabs #tabs { display: none; }
+  body:not(.notabs) .composer { bottom: calc(64px + env(safe-area-inset-bottom)); margin-bottom: -6px; }
   #app > h1:first-child { margin-top: 16px; }
   h1 { font-size: 26px; line-height: 1.25; margin: 8px 0 12px; }
   h1 .sub { display: block; font-size: 16px; font-weight: 500; margin-top: 4px; }
@@ -35,6 +44,23 @@
   .sc.ok { color: var(--ok); }
   .sc.warn { color: var(--warn); }
   .card .why { opacity: .75; }
+  .tiles.sm { grid-template-columns: repeat(4, 1fr); gap: 6px; margin: 8px 0 4px; }
+  .tiles.sm .tile { padding: 8px 4px; text-align: center; }
+  .tiles.sm .tile b { font-size: 20px; }
+  .tiles.sm .tile b i { font-style: normal; font-size: 13px; opacity: .55; }
+  .tiles.sm .tile small { font-size: 12px; }
+  .tiles.sm .tile b.hot { color: var(--warn); }
+  .entries { display: flex; gap: 8px; overflow-x: auto; padding: 6px 0; scrollbar-width: none; }
+  .entries::-webkit-scrollbar { display: none; }
+  .entry { flex: none; display: flex; align-items: center; gap: 6px; padding: 8px 14px; border-radius: 12px; background: var(--card); color: inherit; font-size: 14px; }
+  .entry .ico { font-size: 16px; }
+  .entry em { font-style: normal; font-size: 12px; opacity: .55; }
+  .row.tcard { display: flex; align-items: center; gap: 12px; }
+  .avatar { width: 44px; height: 44px; border-radius: 12px; color: #fff; font-weight: 600; font-size: 18px; display: grid; place-items: center; flex: none; }
+  .tmain { flex: 1; min-width: 0; display: block; }
+  .tmain .meta { margin: 4px 0 6px; }
+  .pbar { display: block; height: 4px; border-radius: 2px; background: var(--line); overflow: hidden; }
+  .pbar i { display: block; height: 100%; border-radius: 2px; background: var(--ok); }
   .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; margin: 8px 0; }
   .tile small { font-size: 13px; }
   .tile b { font-size: 22px; font-variant-numeric: tabular-nums; }
@@ -121,6 +147,12 @@
 </head>
 <body>
 <div id="app"><div class=loading><span class=spin></span><small>加载中…</small></div></div>
+<nav id=tabs>
+  <a href="#/" data-t=home><span class=ico>🏠</span>首页</a>
+  <a href="#/jobs" data-t=jobs><span class=ico>📋</span>岗位</a>
+  <a href="#/domains" data-t=practice><span class=ico>🎯</span>练习</a>
+  <a href="#/me" data-t=me><span class=ico>👤</span>我的</a>
+</nav>
 <div id=busybar><span class=spin></span>AI 思考中 <b id=busysec></b></div>
 <script src="/app.js"></script>
 </body>

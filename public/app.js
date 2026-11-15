@@ -171,30 +171,37 @@ const markOf = j => S.jobMarks?.[j.id]?.s
 const VIEWS = { todo: ['待看', j => j.matched && !markOf(j)], star: ['收藏', j => markOf(j) === 'star'],
   applied: ['已投递', j => markOf(j) === 'applied'], skip: ['不合适', j => markOf(j) === 'skip'], all: ['全部', () => true] }
 
-const radar = () => {
-  if (!J) return ''
-  const todo = J.filter(VIEWS.todo[1])
-  const fresh = todo.filter(j => j.first_seen?.startsWith(today())).length
-  const last = J.reduce((a, j) => j.last_seen > a ? j.last_seen : a, '')
-  const n = k => J.filter(VIEWS[k][1]).length
-  return `<h2>岗位雷达 <small>共 ${J.length} 个，最近巡检 ${when(last)}</small></h2>
-<a class="row more" href="#/market">行情 <small>薪资分布、技能要求 TOP、区域和经验行情</small></a>
-<a class="row more" href="#/jobs">待看 ${todo.length} 个${fresh ? ` · <b class=new>今天新增 ${fresh}</b>` : ''}
-<div class=meta><span>⭐ 收藏 ${n('star')}</span><span>📮 已投递 ${n('applied')}</span><span>🙅 不合适 ${n('skip')}</span></div></a>`
+// 今明两天的笔试/面试场数（和 daily.js 的提醒同一口径）
+const upcomingInterview = () => {
+  const day = off => new Date(Date.now() + off * 86400e3).toLocaleString('sv-SE', { timeZone: 'Asia/Shanghai' }).slice(0, 10)
+  return (S.targets || []).flatMap(t => t.stages || []).filter(e => ['test', 'i1', 'i2', 'i3', 'hr'].includes(e.s) && [day(0), day(1)].includes((e.at || '').slice(0, 10))).length
 }
+const avatarColor = n => `hsl(${[...n].reduce((a, c) => a + c.codePointAt(0), 0) % 360}, 50%, 42%)`
 
-const home = () => `<h1>面霸</h1>
-${radar()}
-<h2>我的简历</h2>
-<a class="row more" href="#/resume">${S.resume ? `已录入 ${S.resume.length} 字` : '还没有简历，点这里添加'}</a>
-<h2>项目档案 <small>${S.projects?.length || 0} 个</small></h2>
-<a class="row more" href="#/projects">${S.projects?.length ? S.projects.map(p => esc(p.name)).join('、') : '还没录入，点这里添加'}<small>真实项目细节，AI 回答和模拟面试会引用</small></a>
-<h2>领域建模 <small>${S.domains?.length || 0} 张卡</small></h2>
-<a class="row more" href="#/domains">${S.domains?.length ? S.domains.map(d => esc(d.name)).join('、') : '还没有，去目标岗位识别领域后生成'}<small>建模方法论＋你项目的真实实践＋建模题</small></a>
+const home = () => {
+  const todo = J === null ? null : J === false ? null : J.filter(VIEWS.todo[1]).length
+  const fresh = J ? J.filter(j => j.matched && j.first_seen?.startsWith(today())).length : 0
+  const studied = S.targets.reduce((a, t) => a + t.gaps.filter(g => g.study).length, 0)
+  const gapsN = S.targets.reduce((a, t) => a + t.gaps.length, 0)
+  const iv = upcomingInterview()
+  return `<h1>面霸</h1>
+<div class="tiles sm">
+  <a class="card tile" href="#/jobs"><small>待看岗位</small><b>${todo ?? '…'}</b></a>
+  <a class="card tile" href="#/jobs"><small>今日新</small><b>${fresh || '0'}</b></a>
+  <a class="card tile" href="#/"><small>已准备</small><b>${studied}<i>/${gapsN}</i></b></a>
+  <a class="card tile" href="#/"><small>今明面试</small><b class="${iv ? 'hot' : ''}">${iv || '无'}</b></a>
+</div>
 <h2>目标岗位</h2>
-${S.targets.map(t => { const c = tally(t); return `<a class="row more" href="#/t/${t.id}"><b>${esc(t.company)}</b> · ${esc(t.role)}
-<div class=meta>${pills(c)}<span>已准备 ${c.studied}/${t.gaps.length}</span><span>模拟 ${t.sessions.length} 次</span>${stageNow(t) ? `<span class="pill ${t.stages.at(-1).s === 'offer' ? 'ok' : ''}">${stageNow(t)}</span>` : ''}</div></a>` }).join('') || '<small>还没有目标岗位</small>'}
-${S.resume ? '<a class="btn primary" href="#/new">＋ 新建目标岗位</a>' : ''}`
+${S.targets.map(t => { const c = tally(t); const p = t.gaps.length ? Math.round(c.studied / t.gaps.length * 100) : 0
+  return `<a class="row tcard" href="#/t/${t.id}">
+  <span class="avatar" style="background:${avatarColor(t.company)}">${esc(t.company[0] || '职')}</span>
+  <span class=tmain><b>${esc(t.company)}</b> · ${esc(t.role)}
+    <div class=meta>${pills(c)}<span>模拟 ${t.sessions.length} 次</span></div>
+    <span class="pbar"><i style="width:${p}%"></i></span></span>
+  ${stageNow(t) ? `<span class="pill ${t.stages.at(-1).s === 'offer' ? 'ok' : ''}">${stageNow(t)}</span>` : ''}
+  </a>` }).join('') || '<small>还没有目标岗位，从岗位雷达里建一个</small>'}
+${S.resume ? '<a class="btn primary wide" href="#/new">＋ 新建目标岗位</a>' : ''}`
+}
 
 const domainsPage = () => `${back('#/')}<h1>领域建模</h1>
 ${S.domains?.map(d => `<a class="row more" href="#/d/${d.id}"><b>${esc(d.name)}</b><small>${(d.quiz || '').split('\n').filter(Boolean).length} 道建模题 · 对话 ${(d.chat || []).length} 条</small></a>`).join('') || '<small>还没有领域卡。到目标岗位页「从 JD 识别领域」后生成，或直接添加</small>'}
@@ -253,6 +260,11 @@ const delProject = id => {
   })
 }
 
+const mePage = () => `<h1>我的</h1>
+<a class="row more" href="#/resume">📄 我的简历<small>${S.resume ? `已录入 ${S.resume.length} 字` : '还没添加'}</small></a>
+<a class="row more" href="#/projects">📦 项目档案<small>${S.projects?.length || 0} 个 · AI 回答会引用的真实项目细节</small></a>
+<a class="row more" href="#/market">📈 行情<small>薪资分布、技能要求 TOP、区域行情</small></a>`
+
 const resumePage = () => `${back('#/')}<h1>我的简历</h1>
 <label class=btn>导入 PDF<input type=file accept=application/pdf hidden onchange="importPDF(this.files[0])"></label>
 <textarea id=resume rows=20 placeholder="粘贴简历文字，或导入 PDF">${esc(S.resume)}</textarea>
@@ -269,7 +281,7 @@ ${j && !j.jd ? `<a class=btn href="${esc(safeUrl(j.url))}" target=_blank rel=noo
 <textarea id=jd rows=14 placeholder="整段粘贴 JD">${j ? esc(jdDraft(j)) : ''}</textarea>
 <button class=primary onclick="analyze()">分析差距</button>`
 
-const jobsPage = () => `${back('#/')}<h1>岗位雷达</h1>
+const jobsPage = () => `${back('#/')}<h1>岗位雷达 <button class=link onclick="location.hash='#/market'">行情 ›</button></h1>
 ${J === null ? loading() : J === false ? '<small>服务器没接巡检数据（JOBS_DB）</small>' : `
 <input id=jq type=search placeholder="搜公司 / 职位 / 技能 / 区域 / 职位描述" value="${esc(jf.q)}" oninput="jf.q = this.value; renderJobs()">
 <div class=chips>${Object.entries(VIEWS).map(([k, [name, f]]) => `<button class="chip ${jf.view === k ? 'on' : ''}" onclick="jf.view = '${k}'; renderJobs(this)">${name} ${J.filter(f).length}</button>`).join('')}</div>
@@ -390,6 +402,7 @@ function route() {
     : page === 'market' ? marketPage()
     : page === 'projects' ? projectsPage()
     : page === 'p' ? projectPage(id)
+    : page === 'me' ? mePage()
     : page === 'domains' ? domainsPage()
     : page === 'd' ? domainPage(id)
     : page === 'new' && S.resume ? newPage(id && J && J.find(j => j.id === decodeURIComponent(id)))
@@ -402,6 +415,12 @@ function route() {
   if (page === 'i' && t) startInterview(t)
   if (page === 'g' && t?.gaps[+sub] && !t.gaps[+sub].study) genStudy()
   if (page === 'jobs') renderJobs()
+  // 底部 tab：按路由高亮；模拟面试页全屏沉浸
+  const tab = /^#\/(jobs|market)/.test(location.hash) ? 'jobs'
+    : /^#\/(domains|d\/)/.test(location.hash) ? 'practice'
+    : /^#\/(me|resume|projects|p\/)/.test(location.hash) ? 'me' : 'home'
+  document.body.classList.toggle('notabs', /^#\/i\//.test(location.hash))
+  document.querySelectorAll('#tabs a').forEach(a => a.classList.toggle('on', a.dataset.t === tab))
   scrollTo(0, 0)
 }
 
@@ -583,7 +602,7 @@ const bars = (rows, unit = '') => { const max = Math.max(...rows.map(r => r[1]),
 const group = (m, key, val) => { const g = {}; for (const j of m) { const k = key(j) || '其他'; (g[k] ??= []).push(val(j)) } return g }
 
 const marketPage = () => {
-  if (J === null || J === false) return `${back('#/')}<h1>行情</h1>${J === null ? loading() : '<small>没有岗位数据</small>'}`
+  if (J === null || J === false) return `${back('#/jobs', '岗位')}<h1>行情</h1>${J === null ? loading() : '<small>没有岗位数据</small>'}`
   const m = J.filter(j => j.matched)
   if (!m.length) return `${back('#/')}<h1>行情</h1><small>还没有符合条件的岗位</small>`
   const pay = m.map(j => j.salary_max_k).filter(v => v != null)
@@ -595,7 +614,7 @@ const marketPage = () => {
   const skillG = group(m.flatMap(j => (j.skills || '').split(',').filter(Boolean).map(s => [s, j])), x => x[0], x => 1)
   const skillRows = topN(Object.entries(skillG).map(([k, v]) => [k, v.length]), 15).map(([k, n]) => [k, n])
   const areaRows = topN(Object.entries(group(m, j => [j.area, j.business_area].filter(Boolean).join('·'), () => 1)).map(([k, v]) => [k, v.length]), 8)
-  return `${back('#/')}<h1>行情 <small>符合条件 ${m.length} 个岗位</small></h1>
+  return `${back('#/jobs', '岗位')}<h1>行情 <small>符合条件 ${m.length} 个岗位</small></h1>
 ${tiles([['薪资上限中位数', med(pay) ? med(pay) + 'K' : '—'], ['前 25%', (pct(pay, .75) ?? '—') + (pct(pay, .75) ? 'K' : '')], ['面议', nm ? nm + ' 个' : '无'], ['常见年终', bonusMode ? '·' + bonusMode + '薪' : '—']])}
 <h2>薪资上限分布</h2>
 ${bars([['40-50K', pay.filter(v => v < 50).length], ['50-60K', pay.filter(v => v >= 50 && v < 60).length], ['60-70K', pay.filter(v => v >= 60 && v < 70).length], ['70-80K', pay.filter(v => v >= 70 && v < 80).length], ['80K+', pay.filter(v => v >= 80).length]], ' 个')}
