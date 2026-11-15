@@ -15,9 +15,22 @@ async function api(url, body, method = body ? 'POST' : 'GET') {
   if (!r.ok) throw new Error(j.error || r.statusText)
   return j
 }
-const load = async () => { S = await api('/api/state') }
-const save = () => api('/api/state', S, 'PUT')
-const loadJobs = () => api('/api/jobs').then(j => { J = j }, () => { J = false })
+// localStorage 缓存（手机走中继链路慢，缓存让第二次打开秒出页面；v 变了就作废重来）
+const CACHE_V = 3
+const cache = {
+  get k() { return 'mianba.v' + CACHE_V },
+  read() { try { return JSON.parse(localStorage.getItem(this.k) || 'null') } catch { return null } },
+  write(d) { try { localStorage.setItem(this.k, JSON.stringify({ v: CACHE_V, d })) } catch { /* 装满就算了 */ } },
+}
+const load = async () => {
+  S = await api('/api/state')
+  cache.write({ state: S, jobs: J && J !== false ? J : cache.read()?.d?.jobs })
+}
+const save = () => api('/api/state', S, 'PUT').then(() => { cache.write({ state: S, jobs: J && J !== false ? J : cache.read()?.d?.jobs }) })
+const loadJobs = () => api('/api/jobs').then(j => {
+  J = j
+  cache.write({ state: S, jobs: j })
+}, () => { J = false })
 const chat = async (system, messages) => (await api('/api/chat', { system, messages })).content
 async function askJSON(system, user) {
   const { content } = await api('/api/chat', { system, messages: [{ role: 'user', content: user }], json: true })
@@ -738,7 +751,16 @@ document.addEventListener('visibilitychange', () => {
   load().then(() => { if (onHome()) route() })
   loadJobs().then(() => { if (onHome()) route(); else renderJobs() })
 })
-load().then(() => { ready = true; route() }).catch(e => {
+// 先用缓存秒开，再拉最新覆盖（正填着表单就不动页面，切回来再刷新）
+{
+  const c = cache.read()?.d
+  if (c?.state) { S = c.state; if (c.jobs) J = c.jobs; ready = true; route() }
+}
+load().then(() => {
+  ready = true
+  const editing = /INPUT|TEXTAREA/.test(document.activeElement?.tagName || '')
+  if (!editing) route()
+}).catch(e => {
   $('#app').innerHTML = `<div class=loading><span class=spin></span><small>连不上服务器：${esc(e.message)}</small><button class=btn onclick="location.reload()">重试</button></div>`
 })
 // 岗位数据单独拉，慢了也不挡首页

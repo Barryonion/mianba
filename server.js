@@ -1,6 +1,7 @@
 // 面霸后端：静态文件 + 整份状态读写 + LLM 转发（OpenAI 兼容接口，默认智谱 GLM）。零依赖，Node 18+。
 // 只监听 127.0.0.1，由 `tailscale serve` 提供 HTTPS，tailnet 外访问不到。
 const http = require('http')
+const zlib = require('zlib')
 const fs = require('fs')
 const path = require('path')
 
@@ -15,9 +16,16 @@ const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '
 
 fs.mkdirSync(DATA, { recursive: true })
 
-const send = (res, code, body, type = 'application/json') => {
-  res.writeHead(code, { 'Content-Type': type })
-  res.end(typeof body === 'string' || Buffer.isBuffer(body) ? body : JSON.stringify(body))
+// 客户端支持 gzip 且压缩有收益时压缩（手机走 tailnet 中继链路慢，1MB 的岗位列表压缩后只有 ~1/5）
+const send = (req, res, code, body, type = 'application/json') => {
+  const buf = Buffer.from(typeof body === 'string' || Buffer.isBuffer(body) ? body : JSON.stringify(body))
+  let payload = buf, extra = {}
+  if (buf.length > 1024 && /gzip/.test(req.headers['accept-encoding'] || '')) {
+    const gz = zlib.gzipSync(buf)
+    if (gz.length < buf.length) { payload = gz; extra = { 'Content-Encoding': 'gzip', 'Vary': 'Accept-Encoding' } }
+  }
+  res.writeHead(code, { 'Content-Type': type, ...extra })
+  res.end(payload)
 }
 
 const readBody = req => new Promise((ok, fail) => {
@@ -62,26 +70,26 @@ function listJobs() {
 http.createServer(async (req, res) => {
   try {
     if (req.url === '/api/state' && req.method === 'GET') {
-      return send(res, 200, fs.existsSync(STATE) ? fs.readFileSync(STATE) : '{"resume":"","targets":[]}')
+      return send(req, res, 200, fs.existsSync(STATE) ? fs.readFileSync(STATE) : '{"resume":"","targets":[]}')
     }
     if (req.url === '/api/state' && req.method === 'PUT') {
       // ponytail: 整份覆盖、后写赢；一个人用够了，多端同时编辑才需要合并
       const state = await readBody(req)
       fs.writeFileSync(STATE + '.tmp', JSON.stringify(state))
       fs.renameSync(STATE + '.tmp', STATE)
-      return send(res, 200, { ok: true })
+      return send(req, res, 200, { ok: true })
     }
     if (req.url === '/api/jobs' && req.method === 'GET') {
       const jobs = listJobs()
-      return jobs ? send(res, 200, jobs) : send(res, 404, { error: '没配 JOBS_DB' })
+      return jobs ? send(req, res, 200, jobs) : send(req, res, 404, { error: '没配 JOBS_DB' })
     }
     if (req.url === '/api/chat' && req.method === 'POST') {
-      return send(res, 200, { content: await chat(await readBody(req)) })
+      return send(req, res, 200, { content: await chat(await readBody(req)) })
     }
     const file = path.join(PUBLIC, path.normalize(req.url.split('?')[0]).replace(/^(\.\.[/\\])+/, ''))
     const target = file.startsWith(PUBLIC) && fs.existsSync(file) && fs.statSync(file).isFile() ? file : path.join(PUBLIC, 'index.html')
-    send(res, 200, fs.readFileSync(target), TYPES[path.extname(target)] || 'application/octet-stream')
+    send(req, res, 200, fs.readFileSync(target), TYPES[path.extname(target)] || 'application/octet-stream')
   } catch (e) {
-    send(res, 500, { error: e.message })
+    send(req, res, 500, { error: e.message })
   }
 }).listen(PORT, '127.0.0.1', () => console.log(`mianba on http://127.0.0.1:${PORT}`))
