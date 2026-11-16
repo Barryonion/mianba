@@ -96,6 +96,21 @@ ${P.material(t)}
 ${g.requirement}
 简历证据：${g.evidence || '无'}
 面试官追问：${g.probe}`,
+  outlineGen: `你是技术学习路径设计师。为指定业务领域设计一门「面试深学课程」的学习地图。输出严格 JSON：{"sections":[{"t":"节标题"}]}，不要数组套数组。
+固定框架、共 12-15 节，节标题里带上具体对象：
+- 1 节领域全貌（业务流程、参与角色、核心概念一览）
+- 3-5 节核心实体深读，每节一个实体，标题形如「实体深读：账变流水」
+- 2-4 节主流方案深读，每节一个方案并点名（如「方案深读：支付宝账务体系」「方案深读：复式记账/Beancount 模型」「方案深读：美团结算中心」）
+- 2-3 节关键难题专题，标题形如「难题专题：幂等与去重」
+- 1 节横向对比与选型决策树
+标题不超过 20 字，不要编号（程序会加）`,
+  sectionGen: `你是资深架构师和面试辅导，为候选人写领域课程的其中一节，纯 markdown、2000-3000 字、由浅入深，按节的类型组织：
+- 实体深读：是什么、职责边界、生命周期与状态、与其他实体/模块的关系、设计陷阱
+- 方案深读：这家方案的架构拆解（分层讲清）、为什么这么设计（约束与取舍）、适用场景、优缺点、可借鉴点
+- 难题专题：问题本质、主流解法对比（各自的代价）、工程落地细节、常见错误
+- 全貌/对比节：对比用表格；对比节给按业务约束选型的决策树（文字版）
+候选人项目档案有相关实践时，标注「↩ 你项目的实践：<对照说明>」。
+结尾固定两段：「## 理解检查」（2 道题，不要答案）、分隔线、「### 参考答案要点」（每题 3-5 行要点）。`,
   domainGen: `你是资深架构师和面试辅导。为指定的业务领域写一张「领域建模知识卡」，纯 markdown、控制在 1200 字内，固定四段：
 ## 核心概念与实体关系
 主要实体、聚合/模块怎么划分、关键状态机或账务口径
@@ -226,10 +241,14 @@ const domainPage = (id, qi) => {
 <button class=primary onclick="addDomain()">保存</button>`
   const d = S.domains?.find(x => x.id === id)
   if (!d) return domainsPage()
-  return `${back('#/domains')}<h1>${esc(d.name)}</h1>
-<div class="card md">${d.facts ? md(d.facts) : '<small>还没有内容</small>'}</div>
+  const done = (d.outline || []).filter((_, i) => S.practice?.items[`ds:${d.id}:${i}`]?.m === 2).length
+  const stat = i => ({ [undefined]: '⬜', 0: '❌', 1: '⚠️', 2: '✅' })[S.practice?.items[`ds:${d.id}:${i}`]?.m]
+  return `${back('#/domains')}<h1>${esc(d.name)} <small>${d.outline ? `课程 · 已掌握 ${done}/${d.outline.length} 节` : '课程'}</small></h1>
+${d.outline ? d.outline.map((x, i) => `<a class="row more" href="#/ds/${d.id}/${i}"><b>${stat(i)} ${i + 1}. ${esc(x.t)}</b><small>${d.sections?.[i] ? Math.round(d.sections[i].content.length / 1000) + 'K 字 · ' + (S.practice?.items[`ds:${d.id}:${i}`]?.m != null ? '已学' : '已生成待学') : '未生成'}</small></a>`).join('')
+: `<div class=card><small>先按领域生成学习地图（12-15 节：全貌 → 实体深读 → 主流方案深读 → 难题专题 → 对比决策）</small><button class=primary onclick="genOutline('${d.id}')">生成学习地图</button></div>`}
+<details><summary>快速概览（单页知识卡）</summary><div class="card md">${d.facts ? md(d.facts) : '<small>还没有</small>'}</div>
 <button onclick="genDomainCard('${d.id}')">${d.facts ? '重新生成知识卡' : '生成知识卡'}</button>
-<details><summary>编辑</summary><textarea id=dfacts rows=16>${esc(d.facts || '')}</textarea><button onclick="saveDomainFacts('${d.id}')">保存</button></details>
+<details><summary>编辑</summary><textarea id=dfacts rows=16>${esc(d.facts || '')}</textarea><button onclick="saveDomainFacts('${d.id}')">保存</button></details></details>
 <h2>考我 <small>AI 出建模题，答完追问再点评</small>${d.chat?.length ? `<button class="link danger" onclick="clearDrill('${d.id}')">清空对话</button>` : ''}</h2>
 <div id=chat>${(d.chat || []).map(m => m.role === 'user' ? `<div class="msg user">${esc(m.content)}</div>` : `<div class="msg assistant md">${md(m.content)}</div>`).join('') || '<small>点「出一道建模题」开始</small>'}</div>
 <div class=composer>
@@ -237,6 +256,17 @@ const domainPage = (id, qi) => {
 <div class=bar><textarea id=answer rows=1 placeholder="答它出的题，或直接描述你的方案让它点评" oninput="grow(this)"></textarea><button class=primary onclick="askDrillSend('${d.id}')">发送</button></div>
 ${(d.chat || []).length ? assess(`dq:${d.id}:${qi ?? 0}`) : ''}
 </div>`
+}
+
+const sectionPage = (id, i) => {
+  const d = domOf(id)
+  const sec = d?.sections?.[i]
+  return `${back('#/d/' + id, d.name)}<h1>${i + 1}. ${esc(d.outline?.[i]?.t || '...')}</h1>
+${sec ? `<div class="card md">${md(sec.content)}</div>
+<div class=chips><button class="chip" onclick="drillSection('${id}', ${i})">🎤 就这节考我</button></div>
+${assess(`ds:${id}:${i}`)}` : `${loading('正在生成本节内容（约 1 分钟）…')}
+<button onclick="genSection('${id}', ${i})">重新生成</button>`}
+`
 }
 
 const projectsPage = () => `${back('#/')}<h1>项目档案</h1>
@@ -419,6 +449,7 @@ function route() {
     : page === 'p' ? projectPage(id)
     : page === 'me' ? mePage()
     : page === 'practice' ? practicePage()
+    : page === 'ds' ? sectionPage(id, +sub)
     : page === 'domains' ? domainsPage()
     : page === 'd' ? domainPage(id, sub != null && /^\d+$/.test(sub) ? +sub : null)
     : page === 'new' && S.resume ? newPage(id && J && J.find(j => j.id === decodeURIComponent(id)))
@@ -432,6 +463,9 @@ function route() {
   if (page === 'g' && t?.gaps[+sub] && !t.gaps[+sub].study) genStudy()
   if (page === 'jobs') renderJobs()
   // 底部 tab：按路由高亮；模拟面试页全屏沉浸
+  // 课程页首次进入自动生成大纲（页面里有手动按钮兜底）
+  if (page === 'd' && id && domOf(id) && !domOf(id).outline && !busy) genOutline(id)
+  if (page === 'ds' && id && domOf(id)?.outline?.[+sub] && !domOf(id).sections?.[+sub] && !busy) genSection(id, +sub)
   if (page === 'd' && id && sub != null && /^\d+$/.test(sub)) {
     const d0 = domOf(id), q0 = (d0?.quiz || '').split('\n').filter(Boolean)[+sub]
     if (d0 && q0 && !(d0.chat || []).length) askDrill(id, q0)
@@ -536,6 +570,8 @@ const resolveKey = k => {
     return g ? { label: g.requirement, sub: `${t.company} · 追问`, href: `#/g/${a}/${b}` } : null }
   if (type === 'dq') { const d = domOf(a), q = (d?.quiz || '').split('\n').filter(Boolean)[+b]
     return d && q ? { label: q, sub: `${d.name} · 建模题`, href: `#/d/${a}/${b}` } : null }
+  if (type === 'ds') { const d = domOf(a), t = d?.outline?.[+b]
+    return d && t ? { label: t.t, sub: `${d.name} · 课程`, href: `#/ds/${a}/${b}` } : null }
   return null
 }
 const dueItems = () => Object.entries(S.practice?.items || {})
@@ -652,6 +688,33 @@ const saveDomainFacts = id => withBusy(async () => {
   await save()
   route()
 })
+
+// ---------- 领域课程 ----------
+const genOutline = id => withBusy(async () => {
+  const d = domOf(id)
+  const r = await askJSON(P.outlineGen, `领域：${d.name}${projectsBlock()}`)
+  if (!Array.isArray(r.sections) || !r.sections.length) throw new Error('大纲格式不对，再试一次')
+  d.outline = r.sections.map(x => ({ t: String(x.t).slice(0, 40) }))
+  await save()
+  route()
+})
+
+const genSection = (id, i) => withBusy(async () => {
+  const d = domOf(id)
+  const titles = d.outline.map((x, k) => `${k + 1}. ${x.t}`).join('\n')
+  const content = await chat(P.sectionGen, [{ role: 'user', content: `领域：${d.name}\n\n课程大纲（当前要写第 ${i + 1} 节）：\n${titles}\n\n要写的节：${d.outline[i].t}${projectsBlock()}` }])
+  d.sections ??= {}
+  d.sections[i] = { content, at: new Date().toISOString() }
+  await save()
+  route()
+})
+
+function drillSection(id, i) {
+  const d = domOf(id), sec = d.sections?.[i]
+  if (!sec) return
+  location.hash = '#/d/' + id
+  askDrill(id, `就下面这节课程的内容出题考我：先出一道相关的题（设计或概念辨析），我答完后追问 2-3 层再点评。\n\n<本节内容>\n${sec.content}\n</本节内容>`)
+}
 
 function askDrillSend(id) {
   const text = $('#answer').value.trim()
