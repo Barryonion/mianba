@@ -40,6 +40,7 @@
   .pill.ok { background: color-mix(in srgb, var(--ok) 18%, transparent); }
   .pill.warn { background: color-mix(in srgb, var(--warn) 18%, transparent); }
   .pill.bad { background: color-mix(in srgb, var(--bad) 18%, transparent); }
+  .assess { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin: 14px 0 4px; font-size: 14px; opacity: .9; }
   .sc { float: right; margin-left: 8px; font-weight: 600; color: var(--accent); }
   .sc.ok { color: var(--ok); }
   .sc.warn { color: var(--warn); }
@@ -152,7 +153,7 @@
 <nav id=tabs>
   <a href="#/" data-t=home><span class=ico>🏠</span>首页</a>
   <a href="#/jobs" data-t=jobs><span class=ico>📋</span>岗位</a>
-  <a href="#/domains" data-t=practice><span class=ico>🎯</span>练习</a>
+  <a href="#/practice" data-t=practice><span class=ico>🎯</span>练习</a>
   <a href="#/me" data-t=me><span class=ico>👤</span>我的</a>
 </nav>
 <div id=busybar><span class=spin></span>AI 思考中 <b id=busysec></b></div>

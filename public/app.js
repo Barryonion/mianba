@@ -101,6 +101,8 @@ ${g.requirement}
 主要实体、聚合/模块怎么划分、关键状态机或账务口径
 ## 常见建模套路
 该领域通用的设计方案与取舍；候选人项目档案里有真实实践的必须标注「↩ 你项目的实践：<对应做法>」
+## 主流方案
+业界代表性做法作参照：大厂公开分享的方案（点名公司与要点）、成熟开源项目、主流云服务，各一行带适用场景；和上面套路的差异点一句带过
 ## 面试常见建模题
 5 道，每行以「- 」开头，一行一道
 ## 通用陷阱
@@ -218,7 +220,7 @@ const domainsPage = () => `${back('#/')}<h1>领域建模</h1>
 ${S.domains?.map(d => `<a class="row more" href="#/d/${d.id}"><b>${esc(d.name)}</b><small>${(d.quiz || '').split('\n').filter(Boolean).length} 道建模题 · 对话 ${(d.chat || []).length} 条</small></a>`).join('') || '<small>还没有领域卡。到目标岗位页「从 JD 识别领域」后生成，或直接添加</small>'}
 <a class="btn primary" href="#/d/new">＋ 添加领域</a>`
 
-const domainPage = id => {
+const domainPage = (id, qi) => {
   if (id === 'new') return `${back('#/domains')}<h1>添加领域</h1>
 <input id=dname placeholder="领域名，如：账务结算"><textarea id=dfacts rows=16 placeholder="知识卡内容，可留空后用「生成知识卡」"></textarea>
 <button class=primary onclick="addDomain()">保存</button>`
@@ -233,6 +235,7 @@ const domainPage = id => {
 <div class=composer>
 <div class=chips><button class=chip onclick="askDrill('${d.id}', '出一道建模题')">出一道建模题</button><button class=chip onclick="askDrill('${d.id}', '换一道更难或更偏工程落地的')">换一道难的</button></div>
 <div class=bar><textarea id=answer rows=1 placeholder="答它出的题，或直接描述你的方案让它点评" oninput="grow(this)"></textarea><button class=primary onclick="askDrillSend('${d.id}')">发送</button></div>
+${(d.chat || []).length ? assess(`dq:${d.id}:${qi ?? 0}`) : ''}
 </div>`
 }
 
@@ -382,6 +385,7 @@ ${st ? `<div class="card md">${md(txt(st.approach))}</div>` : '<small>生成中�
 <div class=composer>
 <div class=chips>${ASKS.map((q, k) => `<button class=chip onclick="askPreset(${k})">${esc(q)}</button>`).join('')}</div>
 <div class=bar><textarea id=answer rows=1 placeholder="问 AI，或写下你的回答让它点评" oninput="grow(this)"></textarea><button class=primary onclick="askGap()">发送</button></div>
+${(g.study || g.chat?.length) ? assess(`g:${t.id}:${i}`) : ''}
 </div>`
 }
 
@@ -414,8 +418,9 @@ function route() {
     : page === 'projects' ? projectsPage()
     : page === 'p' ? projectPage(id)
     : page === 'me' ? mePage()
+    : page === 'practice' ? practicePage()
     : page === 'domains' ? domainsPage()
-    : page === 'd' ? domainPage(id)
+    : page === 'd' ? domainPage(id, sub != null && /^\d+$/.test(sub) ? +sub : null)
     : page === 'new' && S.resume ? newPage(id && J && J.find(j => j.id === decodeURIComponent(id)))
     : !t ? home()
     : page === 't' ? targetPage(t)
@@ -427,8 +432,12 @@ function route() {
   if (page === 'g' && t?.gaps[+sub] && !t.gaps[+sub].study) genStudy()
   if (page === 'jobs') renderJobs()
   // 底部 tab：按路由高亮；模拟面试页全屏沉浸
+  if (page === 'd' && id && sub != null && /^\d+$/.test(sub)) {
+    const d0 = domOf(id), q0 = (d0?.quiz || '').split('\n').filter(Boolean)[+sub]
+    if (d0 && q0 && !(d0.chat || []).length) askDrill(id, q0)
+  }
   const tab = /^#\/(jobs|market)/.test(location.hash) ? 'jobs'
-    : /^#\/(domains|d\/)/.test(location.hash) ? 'practice'
+    : /^#\/(practice|domains|d\/)/.test(location.hash) ? 'practice'
     : /^#\/(me|resume|projects|p\/)/.test(location.hash) ? 'me' : 'home'
   document.body.classList.toggle('notabs', /^#\/i\//.test(location.hash))
   document.querySelectorAll('#tabs a').forEach(a => a.classList.toggle('on', a.dataset.t === tab))
@@ -515,6 +524,80 @@ const addStage = (tid, s) => withBusy(async () => {
   await save()
   route()
 })
+
+// ---------- 练习引擎：掌握度 + 间隔重复 ----------
+// 条目 key：g:<岗位id>:<序号>（差距追问）｜dq:<领域id>:<题号>（建模题）
+// m：0 还不会（明天复习）｜1 模糊（3 天后）｜2 掌握（14 天后）
+const yesterday = () => new Date(Date.now() - 86400e3).toLocaleString('sv-SE', { timeZone: 'Asia/Shanghai' }).slice(0, 10)
+
+const resolveKey = k => {
+  const [, type, a, b] = k.split(':')
+  if (type === 'g') { const t = target(a), g = t?.gaps[+b]
+    return g ? { label: g.requirement, sub: `${t.company} · 追问`, href: `#/g/${a}/${b}` } : null }
+  if (type === 'dq') { const d = domOf(a), q = (d?.quiz || '').split('\n').filter(Boolean)[+b]
+    return d && q ? { label: q, sub: `${d.name} · 建模题`, href: `#/d/${a}/${b}` } : null }
+  return null
+}
+const dueItems = () => Object.entries(S.practice?.items || {})
+  .filter(([k, v]) => v.due && v.due <= today())
+  .map(([k, v]) => ({ ...resolveKey(k), key: k, m: v.m, due: v.due }))
+  .filter(x => x.label)
+  .sort((a, b) => a.m - b.m || (a.due < b.due ? -1 : 1))
+// 错题：模拟面试没答好的差距 + 自评为「还不会」的条目
+const wrongItems = () => {
+  const out = []
+  for (const t of S.targets || []) t.gaps.forEach((g, i) => {
+    const key = `g:${t.id}:${i}`
+    if (g.failed > 0 || S.practice?.items[key]?.m === 0)
+      out.push({ label: g.requirement, sub: `${t.company}${g.failed ? ` · 面试没答好 ×${g.failed}` : ''}`, href: `#/g/${t.id}/${i}` })
+  })
+  for (const d of S.domains || []) (d.quiz || '').split('\n').filter(Boolean).forEach((q, qi) => {
+    if (S.practice?.items[`dq:${d.id}:${qi}`]?.m === 0)
+      out.push({ label: q, sub: `${d.name} · 建模题`, href: `#/d/${d.id}/${qi}` })
+  })
+  return out
+}
+const weekDone = () => [...Array(7)].reduce((a, _, i) => a + (S.practice?.log?.[new Date(Date.now() - i * 86400e3).toLocaleString('sv-SE', { timeZone: 'Asia/Shanghai' }).slice(0, 10)] || 0), 0)
+
+function recordPractice(key, m) {
+  withBusy(async () => {
+    S.practice ??= { items: {}, log: {}, streak: 0, lastDay: '' }
+    const P = S.practice
+    P.items ??= {}; P.log ??= {}
+    const it = P.items[key] ??= { m: 1, seen: 0 }
+    it.m = m; it.seen++; it.last = new Date().toISOString()
+    it.due = new Date(Date.now() + [1, 3, 14][m] * 86400e3).toLocaleString('sv-SE', { timeZone: 'Asia/Shanghai' }).slice(0, 10)
+    const td = today()
+    if (P.lastDay !== td) { P.streak = P.lastDay === yesterday() ? (P.streak || 0) + 1 : 1; P.lastDay = td }
+    P.log[td] = (P.log[td] || 0) + 1
+    await save()
+    route()
+  })
+}
+const assess = key => `<div class=assess>练完自评：
+<button class="chip" onclick="recordPractice('${key}',0)">还不会</button>
+<button class="chip" onclick="recordPractice('${key}',1)">有点模糊</button>
+<button class="chip on" onclick="recordPractice('${key}',2)">掌握了</button></div>`
+
+// 练习主页：今日任务 + 错题本 + 领域卡
+const practicePage = () => {
+  const due = dueItems(), wrong = wrongItems()
+  const P = S.practice || {}
+  return `<h1>练习</h1>
+<div class="tiles sm">
+  <div class="card tile"><small>待复习</small><b class="${due.length ? 'hot' : ''}">${due.length}</b></div>
+  <div class="card tile"><small>错题</small><b class="${wrong.length ? 'hot' : ''}">${wrong.length}</b></div>
+  <div class="card tile"><small>今日已练</small><b>${P.log?.[today()] || 0}</b></div>
+  <div class="card tile"><small>连续</small><b>${P.streak || 0}<i>天</i></b></div>
+</div>
+<h2>今日待复习 <small>到期的知识点，不会的排前面</small></h2>
+${due.slice(0, 12).map(x => `<a class="row more" href="${x.href}"><b>${x.m === 0 ? '❌' : x.m === 1 ? '⚠️' : '✅'} ${esc(x.label)}</b><small>${esc(x.sub)}</small></a>`).join('') || '<small>今天没有到期的复习，练下面的领域卡或等每日一题</small>'}
+<h2>错题本 <small>面试没答好的和自评「还不会」的</small></h2>
+${wrong.slice(0, 12).map(x => `<a class="row more" href="${x.href}"><b>${esc(x.label)}</b><small>${esc(x.sub)}</small></a>`).join('') || '<small>还没有错题，保持</small>'}
+<h2>领域卡 <small>本周共练 ${weekDone()} 次</small></h2>
+${(S.domains || []).map(d => `<a class="row more" href="#/d/${d.id}"><b>${esc(d.name)}</b><small>${(d.quiz || '').split('\n').filter(Boolean).length} 道建模题 · 对话 ${(d.chat || []).length} 条</small></a>`).join('') || '<small>还没有领域卡，到目标岗位页「从 JD 识别领域」后生成</small>'}
+<a class="btn primary wide" href="#/d/new">＋ 添加领域</a>`
+}
 
 // ---------- 领域建模 ----------
 const domOf = id => S.domains?.find(x => x.id === id)
