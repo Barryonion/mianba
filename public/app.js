@@ -125,6 +125,7 @@ const tally = t => ({ strong: t.gaps.filter(g => g.strength === 'strong').length
 const pills = c => `<span class="pill bad">❌ ${c.none}</span><span class="pill warn">⚠️ ${c.weak}</span><span class="pill ok">✅ ${c.strong}</span>`
 const icon = g => ({ strong: '✅', weak: '⚠️' })[g.strength] || '❌'
 // 极简 Markdown：先 esc 整段，再在转义后的文本上识别标题、表格、代码块、引用、分隔线、粗体、行内代码，不会引入任意 HTML
+const mdInline = s => esc(s).replace(/`([^`]+)`/g, '<code>$1</code>').replace(/\*\*(.+?)\*\*/g, '<b>$1</b>')
 function md(s) {
   const out = [], lines = esc(s).split('\n')
   const inline = l => l.replace(/`([^`]+)`/g, '<code>$1</code>').replace(/\*\*(.+?)\*\*/g, '<b>$1</b>')
@@ -136,6 +137,16 @@ function md(s) {
       const code = []
       while (++i < lines.length && !/^\s*```/.test(lines[i])) code.push(lines[i])
       out.push(`<pre class=code>${code.join('\n')}</pre>`)
+    } else if (/^\s*[-*•]\s+/.test(l)) {
+      const items = []
+      while (i < lines.length && /^\s*[-*•]\s+/.test(lines[i])) { items.push(lines[i].replace(/^\s*[-*•]\s+/, '')); i++ }
+      i--
+      out.push(`<ul>${items.map(x => `<li>${inline(x)}</li>`).join('')}</ul>`)
+    } else if (/^\s*\d+[.、]\s*/.test(l)) {
+      const items = []
+      while (i < lines.length && /^\s*\d+[.、]\s*/.test(lines[i])) { items.push(lines[i].replace(/^\s*\d+[.、]\s*/, '')); i++ }
+      i--
+      out.push(`<ol>${items.map(x => `<li>${inline(x)}</li>`).join('')}</ol>`)
     } else if (isRow(l)) {
       const rows = []
       for (; i < lines.length && isRow(lines[i]); i++) {
@@ -153,7 +164,7 @@ function md(s) {
 const gapOf = (tid, i) => target(tid)?.gaps[i]
 const reviewHTML = (r, saving) => [['🎯 能否通过', r.verdict], ['⚠️ 薄弱回答', r.weak], ['✨ 更好的答法', r.better],
   ...(txt(r.missed) ? [['🔁 这场没答好', `${txt(r.missed)}${saving ? '\n（保存后这些条目会标记「模拟没答好」）' : '\n（这些条目已标记「模拟没答好」）'}`]] : [])]
-  .map(([h, v]) => `<div class=card><b>${h}</b><pre>${esc(txt(v) || '（AI 没给出这一项）')}</pre></div>`).join('')
+  .map(([h, v]) => `<div class=card><b>${h}</b><div class=md>${v ? md(txt(v)) : '<small>（AI 没给出这一项）</small>'}</div></div>`).join('')
 
 // 巡检时间是北京时间字符串 "2026-11-02 10:31:41"
 const today = () => new Date().toLocaleString('sv-SE', { timeZone: 'Asia/Shanghai' }).slice(0, 10)
@@ -346,7 +357,7 @@ ${(t.domains || []).map((n, i) => { const d = S.domains?.find(x => x.name === n)
 ${t.tailored ? `<details><summary>查看定制版</summary><pre>${esc(t.tailored)}</pre><button onclick="copyTailored('${t.id}')">复制</button></details>` : ''}
 <button onclick="tailor('${t.id}')">${t.tailored ? '重新生成' : '按 JD 生成定制简历'}</button>
 <h2>面经情报</h2>
-${t.intel ? `<pre>${esc(t.intel)}</pre>` : ''}
+${t.intel ? `<div class="card md">${md(t.intel)}</div>` : ''}
 <textarea id=intel rows=4 placeholder="粘贴小红书 / 牛客面经原文，可多篇"></textarea>
 <button onclick="addIntel('${t.id}')">AI 提炼</button>
 <h2>练习记录</h2>
@@ -363,7 +374,7 @@ const gapPage = (t, i) => {
 <div class="card gapc ${g.strength || 'none'}"><small>简历证据</small><div>${esc(g.evidence || '简历里没找到能证明这一条的经历')}</div>
 <small class=lbl>面试官追问</small><div><b>${esc(g.probe)}</b></div></div>
 <h2>相关概念 <small>点一个让 AI 展开讲</small></h2>
-${st ? `<div class=concepts>${st.concepts.map((c, k) => `<a class="card more" href="javascript:askConcept(${k})"><b>${esc(c.name)}</b><div class=clamp>${esc(txt(c.explain))}</div></a>`).join('')}</div>` : '<small>生成中…</small>'}
+${st ? `<div class=concepts>${st.concepts.map((c, k) => `<a class="card more" href="javascript:askConcept(${k})"><b>${esc(c.name)}</b><div class=clamp>${mdInline(txt(c.explain))}</div></a>`).join('')}</div>` : '<small>生成中…</small>'}
 <h2>回答思路 ${st ? `<button class=link onclick="genStudy(true)">重新生成</button>` : ''}</h2>
 ${st ? `<div class="card md">${md(txt(st.approach))}</div>` : '<small>生成中…</small>'}
 <h2>问 AI ${g.chat?.length ? '<button class="link danger" onclick="clearGapChat()">清空对话</button>' : ''}</h2>
@@ -388,7 +399,7 @@ const sessionPage = (t, sid) => {
   const s = t.sessions.find(s => s.id === sid)
   if (!s) return targetPage(t)
   return `${back('#/t/' + t.id)}<h1>复盘 · ${new Date(s.date).toLocaleString()}</h1>${reviewHTML(s.review)}
-<h2>面试记录</h2>${s.messages.map(m => `<div class="msg ${m.role}">${esc(m.content)}</div>`).join('')}`
+<h2>面试记录</h2>${s.messages.map(m => `<div class="msg ${m.role === 'assistant' ? 'assistant md' : m.role}">${m.role === 'assistant' ? md(m.content) : esc(m.content)}</div>`).join('')}`
 }
 
 function route() {
@@ -680,7 +691,7 @@ function startInterview(t) {
 
 function renderChat() {
   $('#chat').innerHTML = iv.messages.map((m, i) =>
-    `<div class="msg ${m.role}" ${m.role === 'assistant' ? `onclick="speak(iv.messages[${i}].content)"` : ''}>${esc(m.content)}</div>`).join('')
+    `<div class="msg ${m.role === 'assistant' ? 'assistant md' : m.role}" ${m.role === 'assistant' ? `onclick="speak(iv.messages[${i}].content)"` : ''}>${m.role === 'assistant' ? md(m.content) : esc(m.content)}</div>`).join('')
   $('#answer').scrollIntoView({ block: 'end' })
 }
 
