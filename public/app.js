@@ -280,9 +280,11 @@ const projectPage = id => {
   const p = S.projects?.find(x => x.id === id)
   if (!p) return projectsPage()
   return `${back('#/projects')}<h1>${esc(p.name)}</h1>
+<div class="card md">${md(p.facts || '（空）')}</div>
+<details><summary>编辑</summary>
 <input id=pname value="${esc(p.name)}"><textarea id=pfacts rows=20>${esc(p.facts)}</textarea>
-<button class=primary onclick="saveProject('${p.id}')">保存</button>
-<button class=danger onclick="delProject('${p.id}')">删除</button>`
+<button class=primary onclick="saveProject('${p.id}')">保存</button></details>
+<button class=danger onclick="delProject('${p.id}')">删除这个项目</button>`
 }
 
 const saveProject = id => withBusy(async () => {
