@@ -3,6 +3,20 @@ const $ = s => document.querySelector(s)
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]))
 const txt = v => Array.isArray(v) ? v.join('\n') : v // AI 偶尔把字符串字段返回成数组
 
+// ---------- 主题：默认跟随系统，可手动锁定深/浅 ----------
+const themeState = () => localStorage.getItem('mianba.theme') || 'auto'
+function applyTheme() {
+  const t = themeState()
+  const dark = t === 'dark' || (t === 'auto' && matchMedia('(prefers-color-scheme: dark)').matches)
+  document.documentElement.style.colorScheme = dark ? 'dark' : 'light'
+  let m = document.querySelector('meta[name="theme-color"]:not([media])')
+  if (!m) { m = document.createElement('meta'); m.name = 'theme-color'; document.head.appendChild(m) }
+  m.content = dark ? '#1c1c1e' : '#f5f5f7'
+}
+function setTheme(t) { localStorage.setItem('mianba.theme', t); applyTheme(); route() }
+applyTheme() // 脚本一加载就应用，避免闪一下系统主题
+matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => { if (themeState() === 'auto') applyTheme() })
+
 let S = { resume: '', targets: [] }
 let ready = false // state 没加载完不渲染，避免空状态闪现（这个窗口期保存会把数据清空）
 let busy = false
@@ -307,6 +321,11 @@ const delProject = id => {
 }
 
 const mePage = () => `<h1>我的</h1>
+<h2>外观</h2>
+<div class="card chips">
+${[['auto', '🌓 跟随系统'], ['light', '☀️ 浅色'], ['dark', '🌙 深色']].map(([v, n]) =>
+  `<button class="chip ${themeState() === v ? 'on' : ''}" onclick="setTheme('${v}')">${n}</button>`).join('')}
+</div>
 <a class="row more" href="#/resume">📄 我的简历<small>${S.resume ? `已录入 ${S.resume.length} 字` : '还没添加'}</small></a>
 <a class="row more" href="#/projects">📦 项目档案<small>${S.projects?.length || 0} 个 · AI 回答会引用的真实项目细节</small></a>
 <a class="row more" href="#/market">📈 行情<small>薪资分布、技能要求 TOP、区域行情</small></a>`
