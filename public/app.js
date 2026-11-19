@@ -17,6 +17,50 @@ function setTheme(t) { localStorage.setItem('mianba.theme', t); applyTheme(); ro
 applyTheme() // 脚本一加载就应用，避免闪一下系统主题
 matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => { if (themeState() === 'auto') applyTheme() })
 
+// ---------- 划词讲解 + 概念笔记 ----------
+let selInfo = null
+document.addEventListener('selectionchange', () => {
+  setTimeout(() => {
+    const bar = $('#selbar')
+    if (!bar) return
+    const sel = getSelection()
+    const t = sel?.toString().trim()
+    const ok = t && t.length >= 3 && t.length <= 80 && sel.anchorNode?.parentElement?.closest?.('.md, .card')
+    bar.classList.toggle('show', !!ok)
+    if (ok) selInfo = { term: t, src: (document.querySelector('h1')?.textContent || '').replace(/^\d+\. /, '').trim() }
+  }, 250)
+})
+
+function termExplain(el) { explainTerm(el.textContent.trim()) }
+
+function explainTerm(term, src) {
+  withBusy(async () => {
+    const from = src || selInfo?.src || '阅读中'
+    const explain = await chat(`你是资深架构师和面试辅导。用 2-4 句话通俗讲解给出的概念，候选人系统档案里有对应实践就对照着讲；最后单独一行「面试视角：」给一句最关键的要点。简洁，中文。`,
+      [{ role: 'user', content: `概念：${term}\n来源：${from}${projectsBlock()}` }])
+    showSheet(term, explain, from)
+  })
+}
+
+function showSheet(term, explain, src) {
+  const sh = $('#sheet')
+  sh.innerHTML = `<div class="card md"><b>${esc(term)}</b> <small style="display:inline">${esc(src)}</small>${md(explain)}
+<div class=chips><button class="chip on" onclick="noteTerm(${esc(JSON.stringify(term))}, '', ${esc(JSON.stringify(src))})">📒 记到笔记</button><button class="chip" onclick="hideSheet()">收起</button></div></div>`
+  sh.classList.add('show')
+}
+const hideSheet = () => { $('#sheet')?.classList.remove('show'); getSelection()?.removeAllRanges?.(); $('#selbar')?.classList.remove('show') }
+
+function noteTerm(term, explain, src) {
+  withBusy(async () => {
+    S.notes ??= []
+    if (S.notes.some(n => n.term === term)) { hideSheet(); return alert('这个概念已在笔记本里') }
+    S.notes.push({ id: crypto.randomUUID(), term, explain, src: src || selInfo?.src || '', at: new Date().toISOString() })
+    await save()
+    hideSheet()
+    alert('已记入笔记本')
+  })
+}
+
 let S = { resume: '', targets: [] }
 let ready = false // state 没加载完不渲染，避免空状态闪现（这个窗口期保存会把数据清空）
 let busy = false
@@ -124,6 +168,7 @@ ${g.requirement}
 - 难题专题：问题本质、主流解法对比（各自的代价）、工程落地细节、常见错误
 - 全貌/对比节：对比用表格；对比节给按业务约束选型的决策树（文字版）
 候选人项目档案有相关实践时，标注「↩ 你项目的实践：<对照说明>」。
+正文中把 3-6 个最关键的概念用 [[概念名]] 标注（各只标第一次出现）。
 结尾固定两段：「## 理解检查」（2 道题，不要答案）、分隔线、「### 参考答案要点」（每题 3-5 行要点）。`,
   domainGen: `你是资深架构师和面试辅导。为指定的业务领域写一张「领域建模知识卡」，纯 markdown、控制在 1200 字内，固定四段：
 ## 核心概念与实体关系
@@ -160,6 +205,7 @@ const mdInline = s => esc(s).replace(/`([^`]+)`/g, '<code>$1</code>').replace(/\
 function md(s) {
   const out = [], lines = esc(s).split('\n')
   const inline = l => l.replace(/`([^`]+)`/g, '<code>$1</code>').replace(/\*\*(.+?)\*\*/g, '<b>$1</b>')
+    .replace(/\[\[(.+?)\]\]/g, "<span class=term onclick='termExplain(this)'>$1</span>")
   const isRow = l => /^\s*\|/.test(l)
   for (let i = 0; i < lines.length; i++) {
     const l = lines[i]
@@ -328,7 +374,8 @@ ${[['auto', '🌓 跟随系统'], ['light', '☀️ 浅色'], ['dark', '🌙 深
 </div>
 <a class="row more" href="#/resume">📄 我的简历<small>${S.resume ? `已录入 ${S.resume.length} 字` : '还没添加'}</small></a>
 <a class="row more" href="#/projects">📦 项目档案<small>${S.projects?.length || 0} 个 · AI 回答会引用的真实项目细节</small></a>
-<a class="row more" href="#/market">📈 行情<small>薪资分布、技能要求 TOP、区域行情</small></a>`
+<a class="row more" href="#/market">📈 行情<small>薪资分布、技能要求 TOP、区域行情</small></a>
+<a class="row more" href="#/notes">📒 概念笔记<small>${S.notes?.length || 0} 条 · 阅读时划词收藏的概念</small></a>`
 
 const resumePage = () => `${back('#/')}<h1>我的简历</h1>
 <label class=btn>导入 PDF<input type=file accept=application/pdf hidden onchange="importPDF(this.files[0])"></label>
@@ -460,6 +507,7 @@ const sessionPage = (t, sid) => {
 function route() {
   if (!ready) return
   stopVoice()
+  hideSheet?.()
   const [, page = '', id, sub] = location.hash.split('/')
   const t = id && target(id)
   $('#app').innerHTML =
@@ -469,6 +517,8 @@ function route() {
     : page === 'projects' ? projectsPage()
     : page === 'p' ? projectPage(id)
     : page === 'me' ? mePage()
+    : page === 'notes' ? notesPage()
+    : page === 'nr' ? noteReviewPage(id)
     : page === 'practice' ? practicePage()
     : page === 'ds' ? sectionPage(id, +sub)
     : page === 'domains' ? domainsPage()
@@ -591,6 +641,8 @@ const resolveKey = k => {
     return g ? { label: g.requirement, sub: `${t.company} · 追问`, href: `#/g/${a}/${b}` } : null }
   if (type === 'dq') { const d = domOf(a), q = (d?.quiz || '').split('\n').filter(Boolean)[+b]
     return d && q ? { label: q, sub: `${d.name} · 建模题`, href: `#/d/${a}/${b}` } : null }
+  if (type === 'n') { const n = (S.notes || []).find(x => x.id === a)
+    return n ? { label: n.term, sub: '概念笔记', href: `#/nr/${a}` } : null }
   if (type === 'ds') { const d = domOf(a), t = d?.outline?.[+b]
     return d && t ? { label: t.t, sub: `${d.name} · 课程`, href: `#/ds/${a}/${b}` } : null }
   return null
@@ -636,6 +688,60 @@ const assess = key => `<div class=assess>练完自评：
 <button class="chip" onclick="recordPractice('${key}',1)">有点模糊</button>
 <button class="chip on" onclick="recordPractice('${key}',2)">掌握了</button></div>`
 
+// ---------- 概念笔记本 ----------
+const noteOf = id => (S.notes || []).find(x => x.id === id)
+const unmasteredNotes = () => (S.notes || []).filter(n => S.practice?.items[`n:${n.id}`]?.m !== 2)
+
+const notesPage = () => {
+  const ns = S.notes || []
+  const nm = S.practice?.items ? Object.keys(S.practice.items).filter(k => k.startsWith('n:') && S.practice.items[k].m === 2).length : 0
+  return `<h1>笔记本 <small>${ns.length} 条 · 已掌握 ${nm}</small></h1>
+${ns.length ? `<a class="btn primary wide" href="#/nr/${unmasteredNotes()[0]?.id || ns[0].id}">🃏 开始复习（剩 ${unmasteredNotes().length} 条）</a>` : '<small>阅读课程或 AI 回答时，选中文字即可「讲解」或「记笔记」</small>'}
+${[...ns].reverse().map(n => `<div class="card">
+<b>${esc(n.term)}</b> <small style="display:inline">${esc(n.src || '')}</small>
+${n.note ? `<div class=md>${md(n.note)}</div>` : ''}
+<details><summary>讲解</summary><div class=md>${md(n.explain || '（还没生成讲解）')}</div></details>
+<details><summary>批注</summary><textarea id="nte-${n.id}" rows=3 placeholder="自己的话，写一遍记得更牢">${esc(n.note || '')}</textarea><button class="btn" onclick="saveNoteNote('${n.id}')">保存批注</button></details>
+<div class=chips><button class="chip" onclick="location.hash='#/nr/${n.id}'">复习这条</button><button class="chip" onclick="delNote('${n.id}')">删除</button></div>
+</div>`).join('')}`
+}
+
+const noteReviewPage = id => {
+  const n = noteOf(id)
+  if (!n) return notesPage()
+  const rest = unmasteredNotes()
+  const next = rest.find(x => x.id !== id) || rest[0]
+  return `${back('#/notes', '笔记本')}<h1>🃏 概念闪卡</h1>
+<div class="card"><b style="font-size:20px">${esc(n.term)}</b><small>${esc(n.src || '')}</small></div>
+<details><summary style="font-size:16px">👆 心里过一遍，点这里看答案</summary><div class="card md">${md(n.explain || '（这条笔记没有讲解，点下面生成）')}</div></details>
+<div class=chips><button class="chip" onclick="genNoteExplain('${id}')">生成讲解</button>${next && next.id !== id ? `<button class="chip" onclick="location.hash='#/nr/${next.id}'">下一张 →</button>` : ''}</div>
+${assess(`n:${id}`)}
+`
+}
+
+const genNoteExplain = id => withBusy(async () => {
+  const n = noteOf(id)
+  n.explain = await chat('你是资深架构师和面试辅导。用 2-4 句话通俗讲解给出的概念，最后单独一行「面试视角：」给一句要点。简洁，中文。',
+    [{ role: 'user', content: `概念：${n.term}\n来源：${n.src || ''}${projectsBlock()}` }])
+  await save()
+  route()
+})
+
+const saveNoteNote = id => withBusy(async () => {
+  noteOf(id).note = $(`#nte-${id}`).value.trim()
+  await save()
+  route()
+})
+function delNote(id) {
+  if (!confirm('删除这条笔记？')) return
+  withBusy(async () => {
+    S.notes = (S.notes || []).filter(x => x.id !== id)
+    delete S.practice?.items[`n:${id}`]
+    await save()
+    location.hash = '#/notes'
+  })
+}
+
 // 练习主页：今日任务 + 错题本 + 领域卡
 const practicePage = () => {
   const due = dueItems(), wrong = wrongItems()
@@ -651,7 +757,7 @@ const practicePage = () => {
 ${due.slice(0, 12).map(x => `<a class="row more" href="${x.href}"><b>${x.m === 0 ? '❌' : x.m === 1 ? '⚠️' : '✅'} ${esc(x.label)}</b><small>${esc(x.sub)}</small></a>`).join('') || '<small>今天没有到期的复习，练下面的领域卡或等每日一题</small>'}
 <h2>错题本 <small>面试没答好的和自评「还不会」的</small></h2>
 ${wrong.slice(0, 12).map(x => `<a class="row more" href="${x.href}"><b>${esc(x.label)}</b><small>${esc(x.sub)}</small></a>`).join('') || '<small>还没有错题，保持</small>'}
-<h2>领域卡 <small>本周共练 ${weekDone()} 次</small></h2>
+<h2>领域卡 <small>本周共练 ${weekDone()} 次 · 概念笔记 ${S.notes?.length || 0} 条</small></h2>
 ${(S.domains || []).map(d => `<a class="row more" href="#/d/${d.id}"><b>${esc(d.name)}</b><small>${(d.quiz || '').split('\n').filter(Boolean).length} 道建模题 · 对话 ${(d.chat || []).length} 条</small></a>`).join('') || '<small>还没有领域卡，到目标岗位页「从 JD 识别领域」后生成</small>'}
 <a class="btn primary wide" href="#/d/new">＋ 添加领域</a>`
 }
