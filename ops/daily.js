@@ -45,12 +45,27 @@ async function bark(title, body, url, level = "active") {
     return;
   }
 
+  if (process.argv[2] === "nudge") {
+    // 20:30 还没练就催一下；已经练过或没有任务就不打扰
+    const td = new Date().toLocaleString("sv-SE", { timeZone: "Asia/Shanghai" }).slice(0, 10);
+    const practiced = (S.practice?.log?.[td] || 0) > 0;
+    const due = Object.values(S.practice?.items || {}).filter((v) => v.due && v.due <= td).length;
+    const notes = (S.notes || []).filter((n) => S.practice?.items?.[`n:${n.id}`]?.m !== 2).length;
+    if (!practiced && (due || notes)) {
+      await bark("今天还没练习", `待复习 ${due} 项${notes ? ` · 概念 ${notes} 条` : ""}，睡前清一清`, MIANBA_URL, "timeSensitive");
+      console.log("nudge: 已提醒");
+    } else console.log(`nudge: ${practiced ? "今天已练过" : "没有待办"}`);
+    return;
+  }
+
   if (process.argv[2] === "question") {
     // 候选池：薄弱项的追问 + 领域卡的建模题，轮着来，不连续重复
     const all = (S.targets || []).flatMap((t) => t.gaps.map((g, i) => ({ t, g, i })).filter((x) => x.g.strength !== "strong" && x.g.probe))
       .map((x) => ({ key: `${x.t.id}:${x.i}`, title: `每日一题 · ${x.t.company}`, body: `追问：${x.g.probe}`, url: `${MIANBA_URL}/#/g/${x.t.id}/${x.i}` }))
       .concat((S.domains || []).flatMap((d) => String(d.quiz || "").split("\n").map((s) => s.trim().replace(/^[-•]\s*/, "")).filter(Boolean)
-        .map((q) => ({ key: `dom:${d.id}:${q.slice(0, 20)}`, title: `每日建模题 · ${d.name}`, body: q, url: `${MIANBA_URL}/#/d/${d.id}` }))));
+        .map((q) => ({ key: `dom:${d.id}:${q.slice(0, 20)}`, title: `每日建模题 · ${d.name}`, body: q, url: `${MIANBA_URL}/#/d/${d.id}` }))))
+      .concat((S.notes || []).filter((n) => S.practice?.items?.[`n:${n.id}`]?.m !== 2)
+        .map((n) => ({ key: `note:${n.id}`, title: `每日概念 · ${n.term}`, body: `${n.term}：先自己讲一遍，再展开对照`, url: `${MIANBA_URL}/#/nr/${n.id}` })));
     if (!all.length) return console.log("question: 没有候选，跳过");
     const last = fs.existsSync(LAST) ? fs.readFileSync(LAST, "utf8").trim() : "";
     const pos = Math.max(0, all.findIndex((x) => x.key === last));

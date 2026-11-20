@@ -12,6 +12,7 @@ const LLM_MODEL = process.env.LLM_MODEL || 'glm-5.3'
 const DATA = path.join(__dirname, 'data')
 const STATE = path.join(DATA, 'state.json')
 const PUBLIC = path.join(__dirname, 'public')
+const XUEXI = process.env.XUEXI_DIR || '/opt/xuexi' // xl 课程库镜像目录，不存在时该路径返回 404
 const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.json': 'application/json', '.svg': 'image/svg+xml', '.png': 'image/png' }
 
 fs.mkdirSync(DATA, { recursive: true })
@@ -86,7 +87,17 @@ http.createServer(async (req, res) => {
     if (req.url === '/api/chat' && req.method === 'POST') {
       return send(req, res, 200, { content: await chat(await readBody(req)) })
     }
-    const file = path.join(PUBLIC, path.normalize(req.url.split('?')[0]).replace(/^(\.\.[/\\])+/, ''))
+    // xl 课程库镜像：文件名含中文和空格，浏览器会百分号编码，要 decode 后再映射文件
+    const pathname = req.url.split('?')[0]
+    if (pathname === '/xuexi' || pathname.startsWith('/xuexi/')) {
+      let rel = 'index.html'
+      try { rel = decodeURIComponent(pathname.replace(/^\/xuexi\/?/, '')) || 'index.html' } catch (e) {}
+      const xf = path.join(XUEXI, path.normalize(rel).replace(/^(\.\.[/\\])+/, ''))
+      if (xf.startsWith(XUEXI) && fs.existsSync(xf) && fs.statSync(xf).isFile())
+        return send(req, res, 200, fs.readFileSync(xf), TYPES[path.extname(xf)] || 'application/octet-stream')
+      return send(req, res, 404, 'not found', 'text/plain')
+    }
+    const file = path.join(PUBLIC, path.normalize(pathname).replace(/^(\.\.[/\\])+/, ''))
     const target = file.startsWith(PUBLIC) && fs.existsSync(file) && fs.statSync(file).isFile() ? file : path.join(PUBLIC, 'index.html')
     send(req, res, 200, fs.readFileSync(target), TYPES[path.extname(target)] || 'application/octet-stream')
   } catch (e) {

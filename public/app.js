@@ -278,6 +278,7 @@ const home = () => {
   <a class="card tile" href="#/jobs"><small>今日新</small><b>${fresh || '0'}</b></a>
   <a class="card tile" href="#/"><small>已准备</small><b>${studied}<i>/${gapsN}</i></b></a>
   <a class="card tile" href="#/"><small>今明面试</small><b class="${iv ? 'hot' : ''}">${iv || '无'}</b></a>
+  <a class="card tile" href="#/practice"><small>待复习</small><b class="${dueItems().length ? 'hot' : ''}">${dueItems().length}</b></a>
 </div>
 <h2>目标岗位</h2>
 ${S.targets.map(t => { const c = tally(t); const p = t.gaps.length ? Math.round(c.studied / t.gaps.length * 100) : 0
@@ -664,6 +665,8 @@ const wrongItems = () => {
     if (S.practice?.items[`dq:${d.id}:${qi}`]?.m === 0)
       out.push({ label: q, sub: `${d.name} · 建模题`, href: `#/d/${d.id}/${qi}` })
   })
+  for (const n of S.notes || []) if (S.practice?.items[`n:${n.id}`]?.m === 0)
+    out.push({ label: n.term, sub: '概念笔记', href: `#/nr/${n.id}` })
   return out
 }
 const weekDone = () => [...Array(7)].reduce((a, _, i) => a + (S.practice?.log?.[new Date(Date.now() - i * 86400e3).toLocaleString('sv-SE', { timeZone: 'Asia/Shanghai' }).slice(0, 10)] || 0), 0)
@@ -758,7 +761,9 @@ ${due.slice(0, 12).map(x => `<a class="row more" href="${x.href}"><b>${x.m === 0
 <h2>错题本 <small>面试没答好的和自评「还不会」的</small></h2>
 ${wrong.slice(0, 12).map(x => `<a class="row more" href="${x.href}"><b>${esc(x.label)}</b><small>${esc(x.sub)}</small></a>`).join('') || '<small>还没有错题，保持</small>'}
 <h2>领域卡 <small>本周共练 ${weekDone()} 次 · 概念笔记 ${S.notes?.length || 0} 条</small></h2>
-${(S.domains || []).map(d => `<a class="row more" href="#/d/${d.id}"><b>${esc(d.name)}</b><small>${(d.quiz || '').split('\n').filter(Boolean).length} 道建模题 · 对话 ${(d.chat || []).length} 条</small></a>`).join('') || '<small>还没有领域卡，到目标岗位页「从 JD 识别领域」后生成</small>'}
+${(S.domains || []).map(d => { const ol = d.outline || []
+  const m = ol.filter((_, i) => S.practice?.items[`ds:${d.id}:${i}`]?.m === 2).length
+  return `<a class="row more" href="#/d/${d.id}"><b>${esc(d.name)}</b><small>${ol.length ? `课程 ${m}/${ol.length} 节 · ` : ''}${(d.quiz || '').split('\n').filter(Boolean).length} 道建模题</small></a>` }).join('')} || '<small>还没有领域卡，到目标岗位页「从 JD 识别领域」后生成</small>'}
 <a class="btn primary wide" href="#/d/new">＋ 添加领域</a>`
 }
 
