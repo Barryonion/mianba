@@ -140,7 +140,12 @@
   #selbar { display: flex; gap: 8px; padding: 8px; border-radius: 999px; background: var(--bar);
     -webkit-backdrop-filter: blur(16px); backdrop-filter: blur(16px); border: 1px solid var(--line); }
   #sheet { border-radius: 14px; overflow: hidden; max-height: 60vh; overflow-y: auto; padding: 4px; }
-  #sheet .card { margin: 0; box-shadow: 0 4px 24px rgba(0,0,0,.2); }
+  #sheet.pin { z-index: 30; } /* 固定期间压过 tabs(15)、selbar/sheet(18)、busybar(20) */
+  #sheet .card { margin: 0; box-shadow: 0 4px 24px rgba(0,0,0,.25); background: Canvas; border: 1px solid var(--line); } /* 不透明：下层文字不再透出，Canvas 跟随明暗主题 */
+  #sheet .shead { display: flex; align-items: center; gap: 8px; padding: 2px 2px 6px; cursor: grab;
+                  touch-action: none; user-select: none; -webkit-user-select: none; } /* 标题区即拖动手柄 */
+  #sheet .shead:active { cursor: grabbing; }
+  #sheet .shead .shandle { flex: 1; min-width: 0; }
   #busybar { position: fixed; left: 50%; bottom: calc(20px + env(safe-area-inset-bottom)); z-index: 20;
              display: flex; align-items: center; gap: 8px; padding: 10px 16px; border-radius: 999px;
              background: var(--bar); -webkit-backdrop-filter: blur(16px); backdrop-filter: blur(16px);

@@ -39,16 +39,66 @@ function explainTerm(term, src) {
     const explain = await chat(`你是资深架构师和面试辅导。用 2-4 句话通俗讲解给出的概念，候选人系统档案里有对应实践就对照着讲；最后单独一行「面试视角：」给一句最关键的要点。简洁，中文。`,
       [{ role: 'user', content: `概念：${term}\n来源：${from}${projectsBlock()}` }])
     showSheet(term, explain, from)
+    // 每次讲解都入历史（同一个词重复讲也各记一条，靠时间区分）
+    S.explains ??= []
+    S.explains.push({ id: crypto.randomUUID(), term, explain, src: from, at: new Date().toISOString() })
+    await save()
   })
 }
 
+// pin：固定期间讲解区不收起、层级最上，拖到哪儿就停哪儿；取消 pin 回默认底部
+let sheetPin = false
 function showSheet(term, explain, src) {
   const sh = $('#sheet')
-  sh.innerHTML = `<div class="card md"><b>${esc(term)}</b> <small style="display:inline">${esc(src)}</small>${md(explain)}
-<div class=chips><button class="chip on" onclick="noteTerm(${esc(JSON.stringify(term))}, '', ${esc(JSON.stringify(src))})">📒 记到笔记</button><button class="chip" onclick="hideSheet()">收起</button></div></div>`
+  sh.innerHTML = `<div class="card md"><div class=shead id=shead><span class=shandle><b>${esc(term)}</b> <small style="display:inline">${esc(src)}</small></span><button class="chip ${sheetPin ? 'on' : ''}" onclick="togglePin()">📌</button></div>${md(explain)}
+<div class=chips><button class="chip on" onclick="noteTerm(${esc(JSON.stringify(term))}, '', ${esc(JSON.stringify(src))})">📒 记到笔记</button><button class="chip" onclick="location.hash='#/history'">🕘 历史</button><button class="chip" onclick="hideSheet()">收起</button></div></div>`
   sh.classList.add('show')
+  bindSheetDrag()
 }
-const hideSheet = () => { $('#sheet')?.classList.remove('show'); getSelection()?.removeAllRanges?.(); $('#selbar')?.classList.remove('show') }
+function togglePin() {
+  sheetPin = !sheetPin
+  const sh = $('#sheet')
+  sh?.classList.toggle('pin', sheetPin)
+  sh?.querySelector('.shead .chip')?.classList.toggle('on', sheetPin)
+  if (!sheetPin) resetSheetPos()
+}
+const resetSheetPos = () => { const sh = $('#sheet'); if (sh) sh.style.left = sh.style.top = sh.style.right = sh.style.bottom = sh.style.transform = sh.style.transition = '' }
+const hideSheet = () => {
+  if (sheetPin) { // pin 期间收起动作不生效
+    getSelection()?.removeAllRanges?.()
+    $('#selbar')?.classList.remove('show')
+    return
+  }
+  $('#sheet')?.classList.remove('show')
+  resetSheetPos()
+  getSelection()?.removeAllRanges?.()
+  $('#selbar')?.classList.remove('show')
+}
+// 拖动：抓标题区整块拖。Pointer Events 一套同时覆盖桌面鼠标和移动端触摸
+function bindSheetDrag() {
+  const sh = $('#sheet'), h = $('#shead')
+  if (!sh || !h) return
+  h.addEventListener('pointerdown', e => {
+    if (e.target.closest('button') || (e.button != null && e.button > 0)) return // 按钮上的按下留给点击
+    const r = sh.getBoundingClientRect() // 从当前视觉位置接管，改成 left/top 绝对定位
+    sh.style.transition = 'none' // 拖动中不做位移动画
+    sh.style.left = r.left + 'px'; sh.style.top = r.top + 'px'
+    sh.style.right = 'auto'; sh.style.bottom = 'auto'; sh.style.transform = 'none'
+    const sx = e.clientX, sy = e.clientY
+    h.setPointerCapture(e.pointerId) // 捕获后移出标题区也能继续拖
+    const mv = ev => { // 别拖出屏幕
+      sh.style.left = Math.min(Math.max(4, r.left + ev.clientX - sx), Math.max(4, innerWidth - r.width - 4)) + 'px'
+      sh.style.top = Math.min(Math.max(4, r.top + ev.clientY - sy), Math.max(4, innerHeight - 24)) + 'px'
+    }
+    const up = () => {
+      h.removeEventListener('pointermove', mv); h.removeEventListener('pointerup', up); h.removeEventListener('pointercancel', up)
+      sh.style.transition = ''
+    }
+    h.addEventListener('pointermove', mv)
+    h.addEventListener('pointerup', up)
+    h.addEventListener('pointercancel', up)
+  })
+}
 
 function noteTerm(term, explain, src) {
   withBusy(async () => {
@@ -376,7 +426,8 @@ ${[['auto', '🌓 跟随系统'], ['light', '☀️ 浅色'], ['dark', '🌙 深
 <a class="row more" href="#/resume">📄 我的简历<small>${S.resume ? `已录入 ${S.resume.length} 字` : '还没添加'}</small></a>
 <a class="row more" href="#/projects">📦 项目档案<small>${S.projects?.length || 0} 个 · AI 回答会引用的真实项目细节</small></a>
 <a class="row more" href="#/market">📈 行情<small>薪资分布、技能要求 TOP、区域行情</small></a>
-<a class="row more" href="#/notes">📒 概念笔记<small>${S.notes?.length || 0} 条 · 阅读时划词收藏的概念</small></a>`
+<a class="row more" href="#/notes">📒 概念笔记<small>${S.notes?.length || 0} 条 · 阅读时划词收藏的概念</small></a>
+<a class="row more" href="#/history">📖 讲解历史<small>${S.explains?.length || 0} 条 · 划词「讲解」过的都记着</small></a>`
 
 const resumePage = () => `${back('#/')}<h1>我的简历</h1>
 <label class=btn>导入 PDF<input type=file accept=application/pdf hidden onchange="importPDF(this.files[0])"></label>
@@ -520,6 +571,7 @@ function route() {
     : page === 'me' ? mePage()
     : page === 'notes' ? notesPage()
     : page === 'nr' ? noteReviewPage(id)
+    : page === 'history' ? historyPage()
     : page === 'practice' ? practicePage()
     : page === 'ds' ? sectionPage(id, +sub)
     : page === 'domains' ? domainsPage()
@@ -743,6 +795,21 @@ function delNote(id) {
     await save()
     location.hash = '#/notes'
   })
+}
+
+// ---------- 讲解历史：划词「讲解」每次生成的内容都自动记档 ----------
+const historyPage = () => {
+  const es = [...(S.explains || [])].reverse() // 新的排前面
+  return `${back('#/me', '我的')}<h1>讲解历史 <small>${es.length} 条</small></h1>
+${es.map(e => `<div class="card"><b>${esc(e.term)}</b> <small style="display:inline">${esc(e.src || '')} · ${new Date(e.at).toLocaleString()}</small>
+<div class=md>${md(e.explain || '')}</div>
+<div class=chips><button class="chip on" onclick="noteTerm(${esc(JSON.stringify(e.term))}, ${esc(JSON.stringify(e.explain || ''))}, ${esc(JSON.stringify(e.src || ''))})">📒 记到笔记</button></div></div>`).join('') || '<small>还没有讲解记录。阅读课程或 AI 回答时划词点「讲解」，每次都会记到这里</small>'}
+${es.length ? `<div class=footer><button class=danger onclick="clearExplains()">清空讲解历史</button></div>` : ''}`
+}
+
+function clearExplains() {
+  if (!confirm('清空全部讲解历史？')) return
+  withBusy(async () => { S.explains = []; await save(); route() })
 }
 
 // 练习主页：今日任务 + 错题本 + 领域卡
