@@ -164,14 +164,14 @@
 <body>
 <div id="app"><div class=loading><span class=spin></span><small>加载中…</small></div></div>
 <nav id=tabs>
-  <a href="#/" data-t=home><span class=ico>🏠</span>首页</a>
-  <a href="#/jobs" data-t=jobs><span class=ico>📋</span>岗位</a>
-  <a href="#/practice" data-t=practice><span class=ico>🎯</span>练习</a>
-  <a href="#/me" data-t=me><span class=ico>👤</span>我的</a>
+  <a href="#/" data-t=home><span class=ico>🏠</span><span class=tlabel>首页</span></a>
+  <a href="#/jobs" data-t=jobs><span class=ico>📋</span><span class=tlabel>岗位</span></a>
+  <a href="#/practice" data-t=practice><span class=ico>🎯</span><span class=tlabel>练习</span></a>
+  <a href="#/me" data-t=me><span class=ico>👤</span><span class=tlabel>我的</span></a>
 </nav>
 <div id=selbar><button class="chip" onclick="explainTerm(selInfo.term, selInfo.src)">📖 讲解</button><button class="chip" onclick="noteTerm(selInfo.term, '', selInfo.src)">📒 记笔记</button></div>
 <div id=sheet></div>
-<div id=busybar><span class=spin></span>AI 思考中 <b id=busysec></b></div>
+<div id=busybar><span class=spin></span><span id=busylabel>AI 思考中</span> <b id=busysec></b></div>
 <script src="/app.js"></script>
 </body>
 </html>

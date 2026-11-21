@@ -36,7 +36,7 @@ const readBody = req => new Promise((ok, fail) => {
 })
 
 async function chat({ system, messages, json }) {
-  if (!KEY) throw new Error('服务端没配 LLM_KEY')
+  if (!KEY) throw new Error('服务端没配 LLM_KEY / LLM_KEY not configured on server')
   const r = await fetch(LLM_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${KEY}` },
@@ -82,7 +82,7 @@ http.createServer(async (req, res) => {
     }
     if (req.url === '/api/jobs' && req.method === 'GET') {
       const jobs = listJobs()
-      return jobs ? send(req, res, 200, jobs) : send(req, res, 404, { error: '没配 JOBS_DB' })
+      return jobs ? send(req, res, 200, jobs) : send(req, res, 404, { error: '没配 JOBS_DB / JOBS_DB not configured' })
     }
     if (req.url === '/api/chat' && req.method === 'POST') {
       return send(req, res, 200, { content: await chat(await readBody(req)) })

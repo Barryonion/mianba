@@ -17,6 +17,23 @@ function setTheme(t) { localStorage.setItem('mianba.theme', t); applyTheme(); ro
 applyTheme() // 脚本一加载就应用，避免闪一下系统主题
 matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => { if (themeState() === 'auto') applyTheme() })
 
+// ---------- 语言：默认中文，可切英文；UI 文案与 AI 输出语言都跟着走 ----------
+const langState = () => localStorage.getItem('mianba.lang') || 'zh'
+const L = (zh, en) => langState() === 'en' ? (en ?? zh) : zh // 内联双语：中文原文 + 英文对照，缺英文时回落中文
+const voiceLang = () => langState() === 'en' ? 'en-US' : 'zh-CN' // 语音识别/朗读跟界面语言
+const TABS = { home: ['首页', 'Home'], jobs: ['岗位', 'Jobs'], practice: ['练习', 'Practice'], me: ['我的', 'Me'] }
+function applyLang() {
+  document.documentElement.lang = langState() === 'en' ? 'en' : 'zh-CN'
+  document.title = L('面霸', 'Mianba')
+  document.querySelectorAll('#tabs a').forEach(a => { const p = TABS[a.dataset.t]; if (p) a.querySelector('.tlabel').textContent = L(...p) })
+  const bl = $('#busylabel'); if (bl) bl.textContent = L('AI 思考中', 'AI thinking')
+  const sb = document.querySelectorAll('#selbar .chip')
+  if (sb.length === 2) { sb[0].textContent = L('📖 讲解', '📖 Explain'); sb[1].textContent = L('📒 记笔记', '📒 Save note') }
+  const ls = $('#app .loading small'); if (ls) ls.textContent = L('加载中…', 'Loading…')
+}
+function setLang(l) { localStorage.setItem('mianba.lang', l); applyLang(); route() }
+applyLang() // 静态骨架先翻好；页面内字符串在各自渲染处 L()，切语言走 route() 重画
+
 // ---------- 划词讲解 + 概念笔记 ----------
 let selInfo = null
 document.addEventListener('selectionchange', () => {
@@ -35,9 +52,9 @@ function termExplain(el) { explainTerm(el.textContent.trim()) }
 
 function explainTerm(term, src) {
   withBusy(async () => {
-    const from = src || selInfo?.src || '阅读中'
+    const from = src || selInfo?.src || L('阅读中', 'Reading')
     const explain = await chat(`你是资深架构师和面试辅导。用 2-4 句话通俗讲解给出的概念，候选人系统档案里有对应实践就对照着讲；最后单独一行「面试视角：」给一句最关键的要点。简洁，中文。`,
-      [{ role: 'user', content: `概念：${term}\n来源：${from}${projectsBlock()}` }])
+      [{ role: 'user', content: `${L('概念', 'Concept')}: ${term}\n${L('来源', 'Source')}: ${from}${projectsBlock()}` }])
     showSheet(term, explain, from)
     // 每次讲解都入历史（同一个词重复讲也各记一条，靠时间区分）
     S.explains ??= []
@@ -51,7 +68,7 @@ let sheetPin = false
 function showSheet(term, explain, src) {
   const sh = $('#sheet')
   sh.innerHTML = `<div class="card md"><div class=shead id=shead><span class=shandle><b>${esc(term)}</b> <small style="display:inline">${esc(src)}</small></span><button class="chip ${sheetPin ? 'on' : ''}" onclick="togglePin()">📌</button></div>${md(explain)}
-<div class=chips><button class="chip on" onclick="noteTerm(${esc(JSON.stringify(term))}, '', ${esc(JSON.stringify(src))})">📒 记到笔记</button><button class="chip" onclick="location.hash='#/history'">🕘 历史</button><button class="chip" onclick="hideSheet()">收起</button></div></div>`
+<div class=chips><button class="chip on" onclick="noteTerm(${esc(JSON.stringify(term))}, '', ${esc(JSON.stringify(src))})">${L('📒 记到笔记', '📒 Save to notes')}</button><button class="chip" onclick="location.hash='#/history'">${L('🕘 历史', '🕘 History')}</button><button class="chip" onclick="hideSheet()">${L('收起', 'Dismiss')}</button></div></div>`
   sh.classList.add('show')
   bindSheetDrag()
 }
@@ -103,11 +120,11 @@ function bindSheetDrag() {
 function noteTerm(term, explain, src) {
   withBusy(async () => {
     S.notes ??= []
-    if (S.notes.some(n => n.term === term)) { hideSheet(); return alert('这个概念已在笔记本里') }
+    if (S.notes.some(n => n.term === term)) { hideSheet(); return alert(L('这个概念已在笔记本里', 'Already in your notes')) }
     S.notes.push({ id: crypto.randomUUID(), term, explain, src: src || selInfo?.src || '', at: new Date().toISOString() })
     await save()
     hideSheet()
-    alert('已记入笔记本')
+    alert(L('已记入笔记本', 'Saved to notes'))
   })
 }
 
@@ -139,10 +156,14 @@ const loadJobs = () => api('/api/jobs').then(j => {
   J = j
   cache.write({ state: S, jobs: j })
 }, () => { J = false })
-const chat = async (system, messages) => (await api('/api/chat', { system, messages })).content
+// AI 输出语言跟随界面：指令追加在 system 末尾、优先级最高（英文模式要压过 prompt 正文里写死的「中文」）
+const langDirective = () => langState() === 'en'
+  ? '\n\n[Output language: ENGLISH. This overrides any language instruction above — write the entire response in English.]'
+  : '\n\n（回答请全程使用中文。）'
+const chat = async (system, messages) => (await api('/api/chat', { system: system + langDirective(), messages })).content
 async function askJSON(system, user) {
-  const { content } = await api('/api/chat', { system, messages: [{ role: 'user', content: user }], json: true })
-  try { return JSON.parse(content.replace(/```json|```/g, '').trim()) } catch { throw new Error('AI 返回格式不对，再试一次') }
+  const { content } = await api('/api/chat', { system: system + langDirective(), messages: [{ role: 'user', content: user }], json: true })
+  try { return JSON.parse(content.replace(/```json|```/g, '').trim()) } catch { throw new Error(L('AI 返回格式不对，再试一次', 'AI returned an unexpected format, try again')) }
 }
 const target = id => S.targets.find(t => t.id === id)
 const title = t => `${t.company} · ${t.role}`
@@ -238,13 +259,13 @@ ${g.requirement}
 <领域知识卡>
 ${d.facts || '（还没有知识卡内容）'}
 </领域知识卡>${projectsBlock()}`,
-  greeting: '你好，我是今天的面试官。先做个简单的自我介绍吧，重点讲讲和这个岗位相关的经历。',
+  greeting: () => L('你好，我是今天的面试官。先做个简单的自我介绍吧，重点讲讲和这个岗位相关的经历。', "Hi, I'm today's interviewer. Let's start with a quick self-introduction — focus on the experience most relevant to this role."),
 }
 
 // ---------- 页面 ----------
 // 顶部吸顶返回栏，滚动长页面时随时能回去
-const loading = (t = '加载中…') => `<div class=loading><span class=spin></span><small>${esc(t)}</small></div>`
-const back = (href, label = '返回') => `<div class=top><a href="${href}">‹ ${esc(label)}</a></div>`
+const loading = (t = L('加载中…', 'Loading…')) => `<div class=loading><span class=spin></span><small>${esc(t)}</small></div>`
+const back = (href, label = L('返回', 'Back')) => `<div class=top><a href="${href}">‹ ${esc(label)}</a></div>`
 // 差距分析计数：✅ 有力 ⚠️ 薄弱 ❌ 缺失，外加已准备（生成过概念讲解）的条数
 const tally = t => ({ strong: t.gaps.filter(g => g.strength === 'strong').length, weak: t.gaps.filter(g => g.strength === 'weak').length,
   none: t.gaps.filter(g => !['strong', 'weak'].includes(g.strength)).length, studied: t.gaps.filter(g => g.study).length })
@@ -289,25 +310,25 @@ function md(s) {
   return out.join('')
 }
 const gapOf = (tid, i) => target(tid)?.gaps[i]
-const reviewHTML = (r, saving) => [['🎯 能否通过', r.verdict], ['⚠️ 薄弱回答', r.weak], ['✨ 更好的答法', r.better],
-  ...(txt(r.missed) ? [['🔁 这场没答好', `${txt(r.missed)}${saving ? '\n（保存后这些条目会标记「模拟没答好」）' : '\n（这些条目已标记「模拟没答好」）'}`]] : [])]
-  .map(([h, v]) => `<div class=card><b>${h}</b><div class=md>${v ? md(txt(v)) : '<small>（AI 没给出这一项）</small>'}</div></div>`).join('')
+const reviewHTML = (r, saving) => [[L('🎯 能否通过', '🎯 Verdict'), r.verdict], [L('⚠️ 薄弱回答', '⚠️ Weak answers'), r.weak], [L('✨ 更好的答法', '✨ Better answers'), r.better],
+  ...(txt(r.missed) ? [[L('🔁 这场没答好', '🔁 Missed this round'), `${txt(r.missed)}${saving ? '\n' + L('（保存后这些条目会标记「模拟没答好」）', '(will be marked "missed in mocks" after saving)') : '\n' + L('（这些条目已标记「模拟没答好」）', '(marked "missed in mocks")')}`]] : [])]
+  .map(([h, v]) => `<div class=card><b>${h}</b><div class=md>${v ? md(txt(v)) : `<small>${L('（AI 没给出这一项）', '(AI skipped this one)')}</small>`}</div></div>`).join('')
 
 // 巡检时间是北京时间字符串 "2026-11-02 10:31:41"
 const today = () => new Date().toLocaleString('sv-SE', { timeZone: 'Asia/Shanghai' }).slice(0, 10)
-const when = s => s ? (s.startsWith(today()) ? '今天 ' : s.slice(5, 11)) + s.slice(11, 16) : ''
+const when = s => s ? (s.startsWith(today()) ? L('今天 ', 'Today ') : s.slice(5, 11)) + s.slice(11, 16) : ''
 const safeUrl = u => /^https:\/\//.test(u || '') ? u : '#'
 const join = (a, sep = ' · ') => a.filter(Boolean).join(sep)
 const jobTarget = j => S.targets.find(t => t.jobId === j.id)
-// 投递进度：t.stages = [{ s, at, note? }]，按时间追加；当前阶段取最后一条
-const STAGES = { applied: '📮 已投递', test: '📝 笔试', i1: '1️⃣ 一面', i2: '2️⃣ 二面', i3: '3️⃣ 三面', hr: '🤝 HR 面', offer: '🎉 Offer', reject: '❌ 终止' }
-const stageNow = t => t.stages?.length ? STAGES[t.stages.at(-1).s] : ''
+// 投递进度：t.stages = [{ s, at, note? }]，按时间追加；当前阶段取最后一条（文案做成函数，渲染时按当前语言取）
+const STAGES = () => ({ applied: L('📮 已投递', '📮 Applied'), test: L('📝 笔试', '📝 Assessment'), i1: L('1️⃣ 一面', '1️⃣ Round 1'), i2: L('2️⃣ 二面', '2️⃣ Round 2'), i3: L('3️⃣ 三面', '3️⃣ Round 3'), hr: L('🤝 HR 面', '🤝 HR round'), offer: L('🎉 Offer', '🎉 Offer'), reject: L('❌ 终止', '❌ Closed') })
+const stageNow = t => t.stages?.length ? STAGES()[t.stages.at(-1).s] : ''
 // 岗位标记存在面霸自己的 state 里（S.jobMarks[岗位 id] = { s, at }），巡检库保持只读
-const MARKS = { star: '⭐ 收藏', applied: '📮 已投递', skip: '🙅 不合适' }
+const MARKS = () => ({ star: L('⭐ 收藏', '⭐ Starred'), applied: L('📮 已投递', '📮 Applied'), skip: L('🙅 不合适', '🙅 Not a fit') })
 const markOf = j => S.jobMarks?.[j.id]?.s
 // 待看：符合条件且还没标记；全部：包括不符合条件的
-const VIEWS = { todo: ['待看', j => j.matched && !markOf(j)], star: ['收藏', j => markOf(j) === 'star'],
-  applied: ['已投递', j => markOf(j) === 'applied'], skip: ['不合适', j => markOf(j) === 'skip'], all: ['全部', () => true] }
+const VIEWS = () => ({ todo: [L('待看', 'To review'), j => j.matched && !markOf(j)], star: [L('收藏', 'Starred'), j => markOf(j) === 'star'],
+  applied: [L('已投递', 'Applied'), j => markOf(j) === 'applied'], skip: [L('不合适', 'Not a fit'), j => markOf(j) === 'skip'], all: [L('全部', 'All'), () => true] })
 
 // 今明两天的笔试/面试场数（和 daily.js 的提醒同一口径）
 const upcomingInterview = () => {
@@ -317,54 +338,55 @@ const upcomingInterview = () => {
 const avatarColor = n => `hsl(${[...n].reduce((a, c) => a + c.codePointAt(0), 0) % 360}, 50%, 42%)`
 
 const home = () => {
-  const todo = J === null ? null : J === false ? null : J.filter(VIEWS.todo[1]).length
+  const todo = J === null ? null : J === false ? null : J.filter(VIEWS().todo[1]).length
   const fresh = J ? J.filter(j => j.matched && j.first_seen?.startsWith(today())).length : 0
   const studied = S.targets.reduce((a, t) => a + t.gaps.filter(g => g.study).length, 0)
   const gapsN = S.targets.reduce((a, t) => a + t.gaps.length, 0)
   const iv = upcomingInterview()
-  return `<h1>面霸</h1>
+  return `<h1>${L('面霸', 'Mianba')}</h1>
 <div class="tiles sm">
-  <a class="card tile" href="#/jobs"><small>待看岗位</small><b>${todo ?? '…'}</b></a>
-  <a class="card tile" href="#/jobs"><small>今日新</small><b>${fresh || '0'}</b></a>
-  <a class="card tile" href="#/"><small>已准备</small><b>${studied}<i>/${gapsN}</i></b></a>
-  <a class="card tile" href="#/"><small>今明面试</small><b class="${iv ? 'hot' : ''}">${iv || '无'}</b></a>
-  <a class="card tile" href="#/practice"><small>待复习</small><b class="${dueItems().length ? 'hot' : ''}">${dueItems().length}</b></a>
+  <a class="card tile" href="#/jobs"><small>${L('待看岗位', 'To review')}</small><b>${todo ?? '…'}</b></a>
+  <a class="card tile" href="#/jobs"><small>${L('今日新', 'New today')}</small><b>${fresh || '0'}</b></a>
+  <a class="card tile" href="#/"><small>${L('已准备', 'Prepared')}</small><b>${studied}<i>/${gapsN}</i></b></a>
+  <a class="card tile" href="#/"><small>${L('今明面试', 'Interviews')}</small><b class="${iv ? 'hot' : ''}">${iv || L('无', '0')}</b></a>
+  <a class="card tile" href="#/practice"><small>${L('待复习', 'Due')}</small><b class="${dueItems().length ? 'hot' : ''}">${dueItems().length}</b></a>
 </div>
-<h2>目标岗位</h2>
+<h2>${L('目标岗位', 'Target roles')}</h2>
 ${S.targets.map(t => { const c = tally(t); const p = t.gaps.length ? Math.round(c.studied / t.gaps.length * 100) : 0
   return `<a class="row tcard" href="#/t/${t.id}">
-  <span class="avatar" style="background:${avatarColor(t.company)}">${esc(t.company[0] || '职')}</span>
+  <span class="avatar" style="background:${avatarColor(t.company)}">${esc(t.company[0] || L('职', 'J'))}</span>
   <span class=tmain><b>${esc(t.company)}</b> · ${esc(t.role)}
-    <div class=meta>${pills(c)}<span>模拟 ${t.sessions.length} 次</span></div>
+    <div class=meta>${pills(c)}<span>${L(`模拟 ${t.sessions.length} 次`, `${t.sessions.length} mock${t.sessions.length === 1 ? '' : 's'}`)}</span></div>
     <span class="pbar"><i style="width:${p}%"></i></span></span>
   ${stageNow(t) ? `<span class="pill ${t.stages.at(-1).s === 'offer' ? 'ok' : ''}">${stageNow(t)}</span>` : ''}
-  </a>` }).join('') || '<small>还没有目标岗位，从岗位雷达里建一个</small>'}
-${S.resume ? '<a class="btn primary wide" href="#/new">＋ 新建目标岗位</a>' : ''}`
+  </a>` }).join('') || `<small>${L('还没有目标岗位，从岗位雷达里建一个', 'No target roles yet — create one from the job radar')}</small>`}
+${S.resume ? `<a class="btn primary wide" href="#/new">${L('＋ 新建目标岗位', '+ New target role')}</a>` : ''}`
 }
 
-const domainsPage = () => `${back('#/')}<h1>领域建模</h1>
-${S.domains?.map(d => `<a class="row more" href="#/d/${d.id}"><b>${esc(d.name)}</b><small>${(d.quiz || '').split('\n').filter(Boolean).length} 道建模题 · 对话 ${(d.chat || []).length} 条</small></a>`).join('') || '<small>还没有领域卡。到目标岗位页「从 JD 识别领域」后生成，或直接添加</small>'}
-<a class="btn primary" href="#/d/new">＋ 添加领域</a>`
+const domainsPage = () => `${back('#/')}<h1>${L('领域建模', 'Domain modeling')}</h1>
+${S.domains?.map(d => { const qn = (d.quiz || '').split('\n').filter(Boolean).length
+  return `<a class="row more" href="#/d/${d.id}"><b>${esc(d.name)}</b><small>${L(`${qn} 道建模题 · 对话 ${(d.chat || []).length} 条`, `${qn} design questions · ${(d.chat || []).length} messages`)}</small></a>` }).join('') || `<small>${L('还没有领域卡。到目标岗位页「从 JD 识别领域」后生成，或直接添加', "No domain cards yet — generate from a target role's JD, or add one below")}</small>`}
+<a class="btn primary" href="#/d/new">${L('＋ 添加领域', '+ Add domain')}</a>`
 
 const domainPage = (id, qi) => {
-  if (id === 'new') return `${back('#/domains')}<h1>添加领域</h1>
-<input id=dname placeholder="领域名，如：账务结算"><textarea id=dfacts rows=16 placeholder="知识卡内容，可留空后用「生成知识卡」"></textarea>
-<button class=primary onclick="addDomain()">保存</button>`
+  if (id === 'new') return `${back('#/domains')}<h1>${L('添加领域', 'Add domain')}</h1>
+<input id=dname placeholder="${esc(L('领域名，如：账务结算', 'Domain name, e.g. Payment Settlement'))}"><textarea id=dfacts rows=16 placeholder="${esc(L('知识卡内容，可留空后用「生成知识卡」', 'Knowledge card content — can be empty and generated later'))}"></textarea>
+<button class=primary onclick="addDomain()">${L('保存', 'Save')}</button>`
   const d = S.domains?.find(x => x.id === id)
   if (!d) return domainsPage()
   const done = (d.outline || []).filter((_, i) => S.practice?.items[`ds:${d.id}:${i}`]?.m === 2).length
   const stat = i => ({ [undefined]: '⬜', 0: '❌', 1: '⚠️', 2: '✅' })[S.practice?.items[`ds:${d.id}:${i}`]?.m]
-  return `${back('#/domains')}<h1>${esc(d.name)} <small>${d.outline ? `课程 · 已掌握 ${done}/${d.outline.length} 节` : '课程'}</small></h1>
-${d.outline ? d.outline.map((x, i) => `<a class="row more" href="#/ds/${d.id}/${i}"><b>${stat(i)} ${i + 1}. ${esc(x.t)}</b><small>${d.sections?.[i] ? Math.round(d.sections[i].content.length / 1000) + 'K 字 · ' + (S.practice?.items[`ds:${d.id}:${i}`]?.m != null ? '已学' : '已生成待学') : '未生成'}</small></a>`).join('')
-: `<div class=card><small>先按领域生成学习地图（12-15 节：全貌 → 实体深读 → 主流方案深读 → 难题专题 → 对比决策）</small><button class=primary onclick="genOutline('${d.id}')">生成学习地图</button></div>`}
-<details><summary>快速概览（单页知识卡）</summary><div class="card md">${d.facts ? md(d.facts) : '<small>还没有</small>'}</div>
-<button onclick="genDomainCard('${d.id}')">${d.facts ? '重新生成知识卡' : '生成知识卡'}</button>
-<details><summary>编辑</summary><textarea id=dfacts rows=16>${esc(d.facts || '')}</textarea><button onclick="saveDomainFacts('${d.id}')">保存</button></details></details>
-<h2>考我 <small>AI 出建模题，答完追问再点评</small>${d.chat?.length ? `<button class="link danger" onclick="clearDrill('${d.id}')">清空对话</button>` : ''}</h2>
-<div id=chat>${(d.chat || []).map(m => m.role === 'user' ? `<div class="msg user">${esc(m.content)}</div>` : `<div class="msg assistant md">${md(m.content)}</div>`).join('') || '<small>点「出一道建模题」开始</small>'}</div>
+  return `${back('#/domains')}<h1>${esc(d.name)} <small>${d.outline ? L(`课程 · 已掌握 ${done}/${d.outline.length} 节`, `Course · ${done}/${d.outline.length} mastered`) : L('课程', 'Course')}</small></h1>
+${d.outline ? d.outline.map((x, i) => `<a class="row more" href="#/ds/${d.id}/${i}"><b>${stat(i)} ${i + 1}. ${esc(x.t)}</b><small>${d.sections?.[i] ? Math.round(d.sections[i].content.length / 1000) + L('K 字 · ', 'K chars · ') + (S.practice?.items[`ds:${d.id}:${i}`]?.m != null ? L('已学', 'studied') : L('已生成待学', 'generated, unread')) : L('未生成', 'not generated')}</small></a>`).join('')
+: `<div class=card><small>${L('先按领域生成学习地图（12-15 节：全貌 → 实体深读 → 主流方案深读 → 难题专题 → 对比决策）', 'Generate a learning map first (12-15 sections: overview → entity deep dives → real-world design deep dives → hard-problem topics → comparison & decision tree)')}</small><button class=primary onclick="genOutline('${d.id}')">${L('生成学习地图', 'Generate learning map')}</button></div>`}
+<details><summary>${L('快速概览（单页知识卡）', 'Quick overview (one-page knowledge card)')}</summary><div class="card md">${d.facts ? md(d.facts) : `<small>${L('还没有', 'Nothing yet')}</small>`}</div>
+<button onclick="genDomainCard('${d.id}')">${d.facts ? L('重新生成知识卡', 'Regenerate knowledge card') : L('生成知识卡', 'Generate knowledge card')}</button>
+<details><summary>${L('编辑', 'Edit')}</summary><textarea id=dfacts rows=16>${esc(d.facts || '')}</textarea><button onclick="saveDomainFacts('${d.id}')">${L('保存', 'Save')}</button></details></details>
+<h2>${L('考我', 'Quiz me')} <small>${L('AI 出建模题，答完追问再点评', 'AI poses a design question, follows up, then critiques')}</small>${d.chat?.length ? `<button class="link danger" onclick="clearDrill('${d.id}')">${L('清空对话', 'Clear chat')}</button>` : ''}</h2>
+<div id=chat>${(d.chat || []).map(m => m.role === 'user' ? `<div class="msg user">${esc(m.content)}</div>` : `<div class="msg assistant md">${md(m.content)}</div>`).join('') || `<small>${L('点「出一道建模题」开始', 'Tap "Give me a question" to start')}</small>`}</div>
 <div class=composer>
-<div class=chips><button class=chip onclick="askDrill('${d.id}', '出一道建模题')">出一道建模题</button><button class=chip onclick="askDrill('${d.id}', '换一道更难或更偏工程落地的')">换一道难的</button></div>
-<div class=bar><textarea id=answer rows=1 placeholder="答它出的题，或直接描述你的方案让它点评" oninput="grow(this)"></textarea><button class=primary onclick="askDrillSend('${d.id}')">发送</button></div>
+<div class=chips><button class=chip onclick="askDrill('${d.id}', '${L('出一道建模题', 'Give me a question')}')">${L('出一道建模题', 'Give me a question')}</button><button class=chip onclick="askDrill('${d.id}', '${L('换一道更难或更偏工程落地的', 'A harder or more engineering-heavy one')}')">${L('换一道难的', 'A harder one')}</button></div>
+<div class=bar><textarea id=answer rows=1 placeholder="${esc(L('答它出的题，或直接描述你的方案让它点评', 'Answer its question, or describe your design for critique'))}" oninput="grow(this)"></textarea><button class=primary onclick="askDrillSend('${d.id}')">${L('发送', 'Send')}</button></div>
 ${(d.chat || []).length ? assess(`dq:${d.id}:${qi ?? 0}`) : ''}
 </div>`
 }
@@ -374,33 +396,33 @@ const sectionPage = (id, i) => {
   const sec = d?.sections?.[i]
   return `${back('#/d/' + id, d.name)}<h1>${i + 1}. ${esc(d.outline?.[i]?.t || '...')}</h1>
 ${sec ? `<div class="card md">${md(sec.content)}</div>
-<div class=chips><button class="chip" onclick="drillSection('${id}', ${i})">🎤 就这节考我</button></div>
-${assess(`ds:${id}:${i}`)}` : `${loading('正在生成本节内容（约 1 分钟）…')}
-<button onclick="genSection('${id}', ${i})">重新生成</button>`}
+<div class=chips><button class="chip" onclick="drillSection('${id}', ${i})">${L('🎤 就这节考我', '🎤 Quiz me on this')}</button></div>
+${assess(`ds:${id}:${i}`)}` : `${loading(L('正在生成本节内容（约 1 分钟）…', 'Generating this section (about 1 min)…'))}
+<button onclick="genSection('${id}', ${i})">${L('重新生成', 'Regenerate')}</button>`}
 `
 }
 
-const projectsPage = () => `${back('#/')}<h1>项目档案</h1>
-${S.projects?.map(p => `<a class="row more" href="#/p/${p.id}"><b>${esc(p.name)}</b><small>${esc((p.facts || '').slice(0, 60))}…</small></a>`).join('') || '<small>还没有项目档案。建议每个主力项目一张卡：背景、架构、你的职责、关键决策、量化数字、踩坑</small>'}
-<a class="btn primary" href="#/p/new">＋ 添加项目</a>`
+const projectsPage = () => `${back('#/')}<h1>${L('项目档案', 'Project profiles')}</h1>
+${S.projects?.map(p => `<a class="row more" href="#/p/${p.id}"><b>${esc(p.name)}</b><small>${esc((p.facts || '').slice(0, 60))}…</small></a>`).join('') || `<small>${L('还没有项目档案。建议每个主力项目一张卡：背景、架构、你的职责、关键决策、量化数字、踩坑', 'No project profiles yet. One card per core project: context, architecture, your role, key decisions, metrics, pitfalls')}</small>`}
+<a class="btn primary" href="#/p/new">${L('＋ 添加项目', '+ Add project')}</a>`
 
 const projectPage = id => {
-  if (id === 'new') return `${back('#/projects')}<h1>添加项目</h1>
-<input id=pname placeholder="项目名，如：合伙云·结算服务"><textarea id=pfacts rows=20 placeholder="项目事实卡：背景、架构、我的职责、关键决策与权衡、量化数字、踩坑与排查"></textarea>
-<button class=primary onclick="saveProject()">保存</button>`
+  if (id === 'new') return `${back('#/projects')}<h1>${L('添加项目', 'Add project')}</h1>
+<input id=pname placeholder="${esc(L('项目名，如：合伙云·结算服务', 'Project name, e.g. Settlement Service'))}"><textarea id=pfacts rows=20 placeholder="${esc(L('项目事实卡：背景、架构、我的职责、关键决策与权衡、量化数字、踩坑与排查', 'Project fact card: context, architecture, my role, key decisions and trade-offs, metrics, pitfalls and debugging'))}"></textarea>
+<button class=primary onclick="saveProject()">${L('保存', 'Save')}</button>`
   const p = S.projects?.find(x => x.id === id)
   if (!p) return projectsPage()
   return `${back('#/projects')}<h1>${esc(p.name)}</h1>
-<div class="card md">${md(p.facts || '（空）')}</div>
-<details><summary>编辑</summary>
+<div class="card md">${md(p.facts || L('（空）', '(empty)'))}</div>
+<details><summary>${L('编辑', 'Edit')}</summary>
 <input id=pname value="${esc(p.name)}"><textarea id=pfacts rows=20>${esc(p.facts)}</textarea>
-<button class=primary onclick="saveProject('${p.id}')">保存</button></details>
-<button class=danger onclick="delProject('${p.id}')">删除这个项目</button>`
+<button class=primary onclick="saveProject('${p.id}')">${L('保存', 'Save')}</button></details>
+<button class=danger onclick="delProject('${p.id}')">${L('删除这个项目', 'Delete this project')}</button>`
 }
 
 const saveProject = id => withBusy(async () => {
   const name = $('#pname').value.trim(), facts = $('#pfacts').value.trim()
-  if (!name || !facts) return alert('项目名和事实卡都要填')
+  if (!name || !facts) return alert(L('项目名和事实卡都要填', 'Both project name and fact card are required'))
   S.projects ??= []
   if (id) Object.assign(S.projects.find(p => p.id === id), { name, facts })
   else S.projects.push({ id: crypto.randomUUID(), name, facts })
@@ -409,7 +431,7 @@ const saveProject = id => withBusy(async () => {
 })
 
 const delProject = id => {
-  if (!confirm('删除这个项目档案？')) return
+  if (!confirm(L('删除这个项目档案？', 'Delete this project profile?'))) return
   withBusy(async () => {
     S.projects = S.projects.filter(p => p.id !== id)
     await save()
@@ -417,55 +439,57 @@ const delProject = id => {
   })
 }
 
-const mePage = () => `<h1>我的</h1>
-<h2>外观</h2>
-<div class="card chips">
-${[['auto', '🌓 跟随系统'], ['light', '☀️ 浅色'], ['dark', '🌙 深色']].map(([v, n]) =>
-  `<button class="chip ${themeState() === v ? 'on' : ''}" onclick="setTheme('${v}')">${n}</button>`).join('')}
+const mePage = () => `<h1>${L('我的', 'Me')}</h1>
+<h2>${L('外观', 'Appearance')}</h2>
+<div class="card">
+<div class=chips>${[['auto', L('🌓 跟随系统', '🌓 Auto')], ['light', L('☀️ 浅色', '☀️ Light')], ['dark', L('🌙 深色', '🌙 Dark')]].map(([v, n]) =>
+  `<button class="chip ${themeState() === v ? 'on' : ''}" onclick="setTheme('${v}')">${n}</button>`).join('')}</div>
+<div class=chips>${[['zh', '中文'], ['en', 'English']].map(([v, n]) =>
+  `<button class="chip ${langState() === v ? 'on' : ''}" onclick="setLang('${v}')">${n}</button>`).join('')}</div>
 </div>
-<a class="row more" href="#/resume">📄 我的简历<small>${S.resume ? `已录入 ${S.resume.length} 字` : '还没添加'}</small></a>
-<a class="row more" href="#/projects">📦 项目档案<small>${S.projects?.length || 0} 个 · AI 回答会引用的真实项目细节</small></a>
-<a class="row more" href="#/market">📈 行情<small>薪资分布、技能要求 TOP、区域行情</small></a>
-<a class="row more" href="#/notes">📒 概念笔记<small>${S.notes?.length || 0} 条 · 阅读时划词收藏的概念</small></a>
-<a class="row more" href="#/history">📖 讲解历史<small>${S.explains?.length || 0} 条 · 划词「讲解」过的都记着</small></a>`
+<a class="row more" href="#/resume">📄 ${L('我的简历', 'My resume')}<small>${S.resume ? L(`已录入 ${S.resume.length} 字`, `${S.resume.length} chars saved`) : L('还没添加', 'Not added yet')}</small></a>
+<a class="row more" href="#/projects">📦 ${L('项目档案', 'Project profiles')}<small>${L(`${S.projects?.length || 0} 个 · AI 回答会引用的真实项目细节`, `${S.projects?.length || 0} cards · real project details the AI cites in answers`)}</small></a>
+<a class="row more" href="#/market">📈 ${L('行情', 'Market')}<small>${L('薪资分布、技能要求 TOP、区域行情', 'Salary distribution, top skills, areas')}</small></a>
+<a class="row more" href="#/notes">📒 ${L('概念笔记', 'Concept notes')}<small>${L(`${S.notes?.length || 0} 条 · 阅读时划词收藏的概念`, `${S.notes?.length || 0} saved · terms collected while reading`)}</small></a>
+<a class="row more" href="#/history">📖 ${L('讲解历史', 'Explanations')}<small>${L(`${S.explains?.length || 0} 条 · 划词「讲解」过的都记着`, `${S.explains?.length || 0} records · every "Explain" tap is logged`)}</small></a>`
 
-const resumePage = () => `${back('#/')}<h1>我的简历</h1>
-<label class=btn>导入 PDF<input type=file accept=application/pdf hidden onchange="importPDF(this.files[0])"></label>
-<textarea id=resume rows=20 placeholder="粘贴简历文字，或导入 PDF">${esc(S.resume)}</textarea>
-<button class=primary onclick="saveResume()">保存</button>`
+const resumePage = () => `${back('#/')}<h1>${L('我的简历', 'My resume')}</h1>
+<label class=btn>${L('导入 PDF', 'Import PDF')}<input type=file accept=application/pdf hidden onchange="importPDF(this.files[0])"></label>
+<textarea id=resume rows=20 placeholder="${esc(L('粘贴简历文字，或导入 PDF', 'Paste resume text, or import a PDF'))}">${esc(S.resume)}</textarea>
+<button class=primary onclick="saveResume()">${L('保存', 'Save')}</button>`
 
-const jdDraft = j => `${join([j.job_name, j.salary_desc, join([j.area, j.business_area], ''), j.experience, j.degree], '｜')}
-技能标签：${j.skills || '无'}
+const jdDraft = j => `${join([j.job_name, j.salary_desc, join([j.area, j.business_area], ''), j.experience, j.degree], L('｜', ' | '))}
+${L('技能标签：', 'Skills: ')}${j.skills || L('无', 'None')}
 
-${j.jd || '（职位描述还没抓到：打开 BOSS 岗位详情，把完整职位描述粘贴到这里替换这一行，分析会准得多）'}`
+${j.jd || L('（职位描述还没抓到：打开 BOSS 岗位详情，把完整职位描述粘贴到这里替换这一行，分析会准得多）', '(No JD captured yet: open the job on BOSS and paste the full description here to replace this line — the analysis will be far more accurate)')}`
 
-const newPage = j => `${back(j ? '#/jobs' : '#/')}<h1>新建目标岗位</h1>
-<input id=company placeholder="公司" value="${esc(j?.brand_name)}"><input id=role placeholder="岗位" value="${esc(j?.job_name)}">
-${j && !j.jd ? `<a class=btn href="${esc(safeUrl(j.url))}" target=_blank rel=noopener>去 BOSS 复制完整 JD ›</a>` : ''}
-<textarea id=jd rows=14 placeholder="整段粘贴 JD">${j ? esc(jdDraft(j)) : ''}</textarea>
-<button class=primary onclick="analyze()">分析差距</button>`
+const newPage = j => `${back(j ? '#/jobs' : '#/')}<h1>${L('新建目标岗位', 'New target role')}</h1>
+<input id=company placeholder="${esc(L('公司', 'Company'))}" value="${esc(j?.brand_name)}"><input id=role placeholder="${esc(L('岗位', 'Role'))}" value="${esc(j?.job_name)}">
+${j && !j.jd ? `<a class=btn href="${esc(safeUrl(j.url))}" target=_blank rel=noopener>${L('去 BOSS 复制完整 JD ›', 'Open BOSS to copy the full JD ›')}</a>` : ''}
+<textarea id=jd rows=14 placeholder="${esc(L('整段粘贴 JD', 'Paste the full JD'))}">${j ? esc(jdDraft(j)) : ''}</textarea>
+<button class=primary onclick="analyze()">${L('分析差距', 'Analyze gaps')}</button>`
 
-const jobsPage = () => `${back('#/')}<h1>岗位雷达 <button class=link onclick="location.hash='#/market'">行情 ›</button></h1>
-${J === null ? loading() : J === false ? '<small>服务器没接巡检数据（JOBS_DB）</small>' : `
-<input id=jq type=search placeholder="搜公司 / 职位 / 技能 / 区域 / 职位描述" value="${esc(jf.q)}" oninput="jf.q = this.value; renderJobs()">
-<div class=chips>${Object.entries(VIEWS).map(([k, [name, f]]) => `<button class="chip ${jf.view === k ? 'on' : ''}" onclick="jf.view = '${k}'; renderJobs(this)">${name} ${J.filter(f).length}</button>`).join('')}</div>
-<div class=chips><button class="chip ${jf.sort === 'new' ? 'on' : ''}" onclick="jf.sort = 'new'; renderJobs(this)">按发现时间</button><button class="chip ${jf.sort === 'pay' ? 'on' : ''}" onclick="jf.sort = 'pay'; renderJobs(this)">按薪资上限</button><button class="chip ${jf.sort === 'score' ? 'on' : ''}" onclick="jf.sort = 'score'; renderJobs(this)">按匹配度</button></div>
+const jobsPage = () => `${back('#/')}<h1>${L('岗位雷达', 'Job radar')} <button class=link onclick="location.hash='#/market'">${L('行情 ›', 'Market ›')}</button></h1>
+${J === null ? loading() : J === false ? `<small>${L('服务器没接巡检数据（JOBS_DB）', 'Server has no job data (JOBS_DB not configured)')}</small>` : `
+<input id=jq type=search placeholder="${esc(L('搜公司 / 职位 / 技能 / 区域 / 职位描述', 'Search company / title / skills / area / JD'))}" value="${esc(jf.q)}" oninput="jf.q = this.value; renderJobs()">
+<div class=chips>${Object.entries(VIEWS()).map(([k, [name, f]]) => `<button class="chip ${jf.view === k ? 'on' : ''}" onclick="jf.view = '${k}'; renderJobs(this)">${name} ${J.filter(f).length}</button>`).join('')}</div>
+<div class=chips><button class="chip ${jf.sort === 'new' ? 'on' : ''}" onclick="jf.sort = 'new'; renderJobs(this)">${L('按发现时间', 'Newest first')}</button><button class="chip ${jf.sort === 'pay' ? 'on' : ''}" onclick="jf.sort = 'pay'; renderJobs(this)">${L('按薪资上限', 'Top salary')}</button><button class="chip ${jf.sort === 'score' ? 'on' : ''}" onclick="jf.sort = 'score'; renderJobs(this)">${L('按匹配度', 'Best match')}</button></div>
 <div id=jobs></div>`}`
 
 const jobCard = j => {
   const t = jobTarget(j)
   const mk = S.jobMarks?.[j.id]
   return `<div class=card id="job-${esc(j.id)}">
-<span class="pay ${j.salary_desc ? "" : "na"}">${esc(j.salary_desc || "面议")}</span>${j.score != null ? `<span class="sc ${j.score >= 75 ? 'ok' : j.score >= 50 ? 'warn' : ''}">${j.score}</span>` : ''}<b>${j.first_seen?.startsWith(today()) ? '<span class=new>新</span> ' : ''}${esc(j.job_name)}</b>
+<span class="pay ${j.salary_desc ? "" : "na"}">${esc(j.salary_desc || L('面议', 'Negotiable'))}</span>${j.score != null ? `<span class="sc ${j.score >= 75 ? 'ok' : j.score >= 50 ? 'warn' : ''}">${j.score}</span>` : ''}<b>${j.first_seen?.startsWith(today()) ? `<span class=new>${L('新', 'NEW')}</span> ` : ''}${esc(j.job_name)}</b>
 <small>${esc(join([j.brand_name, j.brand_scale, j.brand_stage, j.brand_industry]))}</small>
 <small>${esc(join([join([j.area, j.business_area], ''), j.experience, j.degree, j.boss_name && join([j.boss_name, j.boss_title], ' ')]))}</small>
 ${j.skills ? `<div class=tags>${j.skills.split(',').slice(0, 10).map(s => `<span>${esc(s)}</span>`).join('')}</div>` : ''}
-${j.score_reason ? `<small class=why>${j.score} 分：${esc(j.score_reason)}</small>` : ''}
-${j.jd ? `<details><summary>职位描述</summary><pre>${esc(j.jd)}</pre></details>` : ''}
-<small>首次发现 ${when(j.first_seen)} · 出现 ${j.seen_count} 次${j.pushed ? ' · 已推送' : ''}${j.matched ? '' : ' · 不符合条件'}${mk ? ` · ${MARKS[mk.s]} ${new Date(mk.at).toLocaleDateString()}` : ''}</small>
-<a class=btn href="${esc(safeUrl(j.url))}" target=_blank rel=noopener>去 BOSS 看</a>
-${t ? `<a class=btn href="#/t/${t.id}">已建目标 ›</a>` : `<a class="btn primary" href="#/new/${encodeURIComponent(j.id)}">建为目标岗位</a>`}
-<div class=chips>${Object.entries(MARKS).map(([s, name]) => `<button class="chip ${mk?.s === s ? 'on' : ''}" onclick="markJob(${esc(JSON.stringify(j.id))}, '${s}')">${name}</button>`).join('')}</div>
+${j.score_reason ? `<small class=why>${j.score}${L(' 分：', ' pts: ')}${esc(j.score_reason)}</small>` : ''}
+${j.jd ? `<details><summary>${L('职位描述', 'JD')}</summary><pre>${esc(j.jd)}</pre></details>` : ''}
+<small>${L('首次发现', 'First seen')} ${when(j.first_seen)} · ${L(`出现 ${j.seen_count} 次`, `seen ${j.seen_count}×`)}${j.pushed ? ' · ' + L('已推送', 'pushed') : ''}${j.matched ? '' : ' · ' + L('不符合条件', 'not qualified')}${mk ? ` · ${MARKS()[mk.s]} ${new Date(mk.at).toLocaleDateString()}` : ''}</small>
+<a class=btn href="${esc(safeUrl(j.url))}" target=_blank rel=noopener>${L('去 BOSS 看', 'Open in BOSS')}</a>
+${t ? `<a class=btn href="#/t/${t.id}">${L('已建目标 ›', 'Target role ›')}</a>` : `<a class="btn primary" href="#/new/${encodeURIComponent(j.id)}">${L('建为目标岗位', 'Create target role')}</a>`}
+<div class=chips>${Object.entries(MARKS()).map(([s, name]) => `<button class="chip ${mk?.s === s ? 'on' : ''}" onclick="markJob(${esc(JSON.stringify(j.id))}, '${s}')">${name}</button>`).join('')}</div>
 </div>`
 }
 
@@ -474,15 +498,15 @@ function renderJobs(btn) {
   if (btn) return route()
   if (!$('#jobs') || !J) return
   const q = jf.q.trim().toLowerCase()
-  const list = J.filter(j => VIEWS[jf.view][1](j) &&
+  const list = J.filter(j => VIEWS()[jf.view][1](j) &&
     (!q || join([j.job_name, j.brand_name, j.skills, j.area, j.business_area, j.brand_industry, j.jd], ' ').toLowerCase().includes(q)))
   if (jf.sort === 'pay') list.sort((a, b) => (b.salary_max_k ?? -1) - (a.salary_max_k ?? -1)) // 稳定排序，同薪资仍按发现时间
   if (jf.sort === 'score') list.sort((a, b) => (b.score ?? -1) - (a.score ?? -1)) // 没分数的排最后
-  $('#jobs').innerHTML = `<small>${list.length} 个</small>` + (list.map(jobCard).join('') || '<p><small>没有匹配的岗位</small></p>')
+  $('#jobs').innerHTML = `<small>${L(`${list.length} 个`, `${list.length} jobs`)}</small>` + (list.map(jobCard).join('') || `<p><small>${L('没有匹配的岗位', 'No matching jobs')}</small></p>`)
 }
 
 const gapCard = (t, g, i) => `<a class="card more gapc ${g.strength || 'none'}" href="#/g/${t.id}/${i}"><b>${icon(g)} ${esc(g.requirement)}</b>
-${g.evidence ? `<small>${esc(g.evidence)}</small>` : ''}<div class=probe>追问：${esc(g.probe)}</div>${g.study ? '<span class="pill ok">已准备</span>' : ''}${g.failed ? `<span class="pill bad">模拟没答好 ×${g.failed}</span>` : ''}</a>`
+${g.evidence ? `<small>${esc(g.evidence)}</small>` : ''}<div class=probe>${L('追问', 'Follow-up')}: ${esc(g.probe)}</div>${g.study ? `<span class="pill ok">${L('已准备', 'Prepared')}</span>` : ''}${g.failed ? `<span class="pill bad">${L(`模拟没答好 ×${g.failed}`, `Missed in mocks ×${g.failed}`)}</span>` : ''}</a>`
 
 // 先列缺失和薄弱的（要重点准备），有力的折叠起来；链接仍用原始序号
 const targetPage = t => {
@@ -490,51 +514,51 @@ const targetPage = t => {
   const rows = t.gaps.map((g, i) => ({ g, i }))
   const todo = rows.filter(x => x.g.strength !== 'strong').sort((a, b) => (a.g.strength === 'weak') - (b.g.strength === 'weak'))
   const done = rows.filter(x => x.g.strength === 'strong')
-  return `${back('#/', '面霸')}<h1>${esc(t.company)}<small class=sub>${esc(t.role)}</small></h1>
-<div class=meta>${pills(c)}<span>已准备 ${c.studied}/${t.gaps.length}</span></div>
-<a class="btn primary wide" href="#/i/${t.id}">🎤 开始模拟面试</a>
-<h2>投递进度 ${stageNow(t) ? `<small>当前：${stageNow(t)}</small>` : ''}</h2>
-${t.stages?.length ? t.stages.slice().reverse().map(e => `<div class=card><b>${STAGES[e.s] || esc(e.s)}</b> <small style="display:inline">${new Date(e.at).toLocaleDateString()}</small>${e.note ? `<div>${esc(e.note)}</div>` : ''}</div>`).join('') : '<small>还没记录。先选日期（可选，默认今天）、填备注（可选），再点下面的阶段按钮</small>'}
+  return `${back('#/', L('面霸', 'Home'))}<h1>${esc(t.company)}<small class=sub>${esc(t.role)}</small></h1>
+<div class=meta>${pills(c)}<span>${L(`已准备 ${c.studied}/${t.gaps.length}`, `Prepared ${c.studied}/${t.gaps.length}`)}</span></div>
+<a class="btn primary wide" href="#/i/${t.id}">${L('🎤 开始模拟面试', '🎤 Start mock interview')}</a>
+<h2>${L('投递进度', 'Application status')} ${stageNow(t) ? `<small>${L('当前', 'Now')}: ${stageNow(t)}</small>` : ''}</h2>
+${t.stages?.length ? t.stages.slice().reverse().map(e => `<div class=card><b>${STAGES()[e.s] || esc(e.s)}</b> <small style="display:inline">${new Date(e.at).toLocaleDateString()}</small>${e.note ? `<div>${esc(e.note)}</div>` : ''}</div>`).join('') : `<small>${L('还没记录。先选日期（可选，默认今天）、填备注（可选），再点下面的阶段按钮', 'No entries yet. Pick a date (optional, defaults to today), add a note (optional), then tap a stage button below')}</small>`}
 <input type=date id=stgdate onchange="$('#stgnote')?.focus()">
-<input id=stgnote placeholder="备注，可选（如 HR 微信、面试官风格）">
-<div class=chips>${Object.entries(STAGES).map(([s, n]) => `<button class="chip ${t.stages?.at(-1)?.s === s ? 'on' : ''}" onclick="addStage('${t.id}', '${s}')">${n}</button>`).join('')}</div>
-<h2>重点准备 <small>点进去看相关概念、回答思路，和 AI 练追问</small></h2>
-${todo.map(x => gapCard(t, x.g, x.i)).join('') || '<small>没有薄弱项</small>'}
-${done.length ? `<details class=fold><summary>✅ 简历能证明的 ${done.length} 条</summary>${done.map(x => gapCard(t, x.g, x.i)).join('')}</details>` : ''}
-<h2>领域建模 <small>面试官爱考「让你设计一个 X」</small></h2>
+<input id=stgnote placeholder="${esc(L('备注，可选（如 HR 微信、面试官风格）', 'Note, optional (e.g. HR WeChat, interviewer style)'))}">
+<div class=chips>${Object.entries(STAGES()).map(([s, n]) => `<button class="chip ${t.stages?.at(-1)?.s === s ? 'on' : ''}" onclick="addStage('${t.id}', '${s}')">${n}</button>`).join('')}</div>
+<h2>${L('重点准备', 'Focus prep')} <small>${L('点进去看相关概念、回答思路，和 AI 练追问', 'Open for key concepts, an answer approach, and follow-up practice with AI')}</small></h2>
+${todo.map(x => gapCard(t, x.g, x.i)).join('') || `<small>${L('没有薄弱项', 'No weak areas')}</small>`}
+${done.length ? `<details class=fold><summary>${L(`✅ 简历能证明的 ${done.length} 条`, `✅ Proven by resume (${done.length})`)}</summary>${done.map(x => gapCard(t, x.g, x.i)).join('')}</details>` : ''}
+<h2>${L('领域建模', 'Domain modeling')} <small>${L('面试官爱考「让你设计一个 X」', 'Interviewers love "design an X" questions')}</small></h2>
 ${(t.domains || []).map((n, i) => { const d = S.domains?.find(x => x.name === n)
-  return d ? `<a class="card more" href="#/d/${d.id}"><b>${esc(n)}</b><small>已有知识卡，点进去复习或「考我」</small></a>`
-    : `<div class=card><b>${esc(n)}</b><button class=btn onclick="genDomainFromTarget('${t.id}', ${i})">生成知识卡</button></div>` }).join('') || '<small>还没识别这个岗位涉及的领域</small>'}
-<button onclick="detectDomains('${t.id}')">${t.domains?.length ? '重新识别领域' : '从 JD 识别领域'}</button>
-<h2>定制简历</h2>
-${t.tailored ? `<details><summary>查看定制版</summary><pre>${esc(t.tailored)}</pre><button onclick="copyTailored('${t.id}')">复制</button></details>` : ''}
-<button onclick="tailor('${t.id}')">${t.tailored ? '重新生成' : '按 JD 生成定制简历'}</button>
-<h2>面经情报</h2>
+  return d ? `<a class="card more" href="#/d/${d.id}"><b>${esc(n)}</b><small>${L('已有知识卡，点进去复习或「考我」', 'Knowledge card exists — open to review or get quizzed')}</small></a>`
+    : `<div class=card><b>${esc(n)}</b><button class=btn onclick="genDomainFromTarget('${t.id}', ${i})">${L('生成知识卡', 'Generate knowledge card')}</button></div>` }).join('') || `<small>${L('还没识别这个岗位涉及的领域', 'No domains detected for this role yet')}</small>`}
+<button onclick="detectDomains('${t.id}')">${t.domains?.length ? L('重新识别领域', 'Re-detect domains') : L('从 JD 识别领域', 'Detect domains from JD')}</button>
+<h2>${L('定制简历', 'Tailored resume')}</h2>
+${t.tailored ? `<details><summary>${L('查看定制版', 'View tailored version')}</summary><pre>${esc(t.tailored)}</pre><button onclick="copyTailored('${t.id}')">${L('复制', 'Copy')}</button></details>` : ''}
+<button onclick="tailor('${t.id}')">${t.tailored ? L('重新生成', 'Regenerate') : L('按 JD 生成定制简历', 'Generate tailored resume from JD')}</button>
+<h2>${L('面经情报', 'Interview intel')}</h2>
 ${t.intel ? `<div class="card md">${md(t.intel)}</div>` : ''}
-<textarea id=intel rows=4 placeholder="粘贴小红书 / 牛客面经原文，可多篇"></textarea>
-<button onclick="addIntel('${t.id}')">AI 提炼</button>
-<h2>练习记录</h2>
-${[...t.sessions].reverse().map(s => `<a class="row more" href="#/s/${t.id}/${s.id}">${new Date(s.date).toLocaleString()}<span class=stars>${'★'.repeat(s.rating)}</span></a>`).join('') || '<small>暂无，点上面「开始模拟面试」</small>'}
-<div class=footer><button class=danger onclick="delTarget('${t.id}')">删除这个岗位</button></div>`
+<textarea id=intel rows=4 placeholder="${esc(L('粘贴小红书 / 牛客面经原文，可多篇', 'Paste interview-experience posts (Xiaohongshu / Nowcoder), multiple allowed'))}"></textarea>
+<button onclick="addIntel('${t.id}')">${L('AI 提炼', 'AI digest')}</button>
+<h2>${L('练习记录', 'Mock sessions')}</h2>
+${[...t.sessions].reverse().map(s => `<a class="row more" href="#/s/${t.id}/${s.id}">${new Date(s.date).toLocaleString()}<span class=stars>${'★'.repeat(s.rating)}</span></a>`).join('') || `<small>${L('暂无，点上面「开始模拟面试」', 'None yet — tap "Start mock interview" above')}</small>`}
+<div class=footer><button class=danger onclick="delTarget('${t.id}')">${L('删除这个岗位', 'Delete this target role')}</button></div>`
 }
 
-const ASKS = ['给我一个参考回答', '面试官接下来还会怎么追问？', '我先答一遍，你来点评']
+const ASKS = () => [L('给我一个参考回答', 'Give me a reference answer'), L('面试官接下来还会怎么追问？', 'How will the interviewer follow up next?'), L('我先答一遍，你来点评', "I'll answer first — critique me")]
 const gapPage = (t, i) => {
   const g = t.gaps[i]
   if (!g) return targetPage(t)
   const st = g.study
   return `${back('#/t/' + t.id, t.company)}<h1 class=req>${icon(g)} ${esc(g.requirement)}</h1>
-<div class="card gapc ${g.strength || 'none'}"><small>简历证据</small><div>${esc(g.evidence || '简历里没找到能证明这一条的经历')}</div>
-<small class=lbl>面试官追问</small><div><b>${esc(g.probe)}</b></div></div>
-<h2>相关概念 <small>点一个让 AI 展开讲</small></h2>
-${st ? `<div class=concepts>${st.concepts.map((c, k) => `<a class="card more" href="javascript:askConcept(${k})"><b>${esc(c.name)}</b><div class=clamp>${mdInline(txt(c.explain))}</div></a>`).join('')}</div>` : '<small>生成中…</small>'}
-<h2>回答思路 ${st ? `<button class=link onclick="genStudy(true)">重新生成</button>` : ''}</h2>
-${st ? `<div class="card md">${md(txt(st.approach))}</div>` : '<small>生成中…</small>'}
-<h2>问 AI ${g.chat?.length ? '<button class="link danger" onclick="clearGapChat()">清空对话</button>' : ''}</h2>
-<div id=chat>${(g.chat || []).map(m => m.role === 'user' ? `<div class="msg user">${esc(m.content)}</div>` : `<div class="msg assistant md">${md(m.content)}</div>`).join('') || '<small>点上面的概念，或用下面的快捷提问开始</small>'}</div>
+<div class="card gapc ${g.strength || 'none'}"><small>${L('简历证据', 'Resume evidence')}</small><div>${esc(g.evidence || L('简历里没找到能证明这一条的经历', 'No resume evidence found for this requirement'))}</div>
+<small class=lbl>${L('面试官追问', 'Interviewer follow-up')}</small><div><b>${esc(g.probe)}</b></div></div>
+<h2>${L('相关概念', 'Key concepts')} <small>${L('点一个让 AI 展开讲', 'Tap one for a deep dive from AI')}</small></h2>
+${st ? `<div class=concepts>${st.concepts.map((c, k) => `<a class="card more" href="javascript:askConcept(${k})"><b>${esc(c.name)}</b><div class=clamp>${mdInline(txt(c.explain))}</div></a>`).join('')}</div>` : `<small>${L('生成中…', 'Generating…')}</small>`}
+<h2>${L('回答思路', 'Answer approach')} ${st ? `<button class=link onclick="genStudy(true)">${L('重新生成', 'Regenerate')}</button>` : ''}</h2>
+${st ? `<div class="card md">${md(txt(st.approach))}</div>` : `<small>${L('生成中…', 'Generating…')}</small>`}
+<h2>${L('问 AI', 'Ask AI')} ${g.chat?.length ? `<button class="link danger" onclick="clearGapChat()">${L('清空对话', 'Clear chat')}</button>` : ''}</h2>
+<div id=chat>${(g.chat || []).map(m => m.role === 'user' ? `<div class="msg user">${esc(m.content)}</div>` : `<div class="msg assistant md">${md(m.content)}</div>`).join('') || `<small>${L('点上面的概念，或用下面的快捷提问开始', 'Tap a concept above, or use a quick prompt below')}</small>`}</div>
 <div class=composer>
-<div class=chips>${ASKS.map((q, k) => `<button class=chip onclick="askPreset(${k})">${esc(q)}</button>`).join('')}</div>
-<div class=bar><textarea id=answer rows=1 placeholder="问 AI，或写下你的回答让它点评" oninput="grow(this)"></textarea><button class=primary onclick="askGap()">发送</button></div>
+<div class=chips>${ASKS().map((q, k) => `<button class=chip onclick="askPreset(${k})">${esc(q)}</button>`).join('')}</div>
+<div class=bar><textarea id=answer rows=1 placeholder="${esc(L('问 AI，或写下你的回答让它点评', 'Ask AI, or write your answer for critique'))}" oninput="grow(this)"></textarea><button class=primary onclick="askGap()">${L('发送', 'Send')}</button></div>
 ${(g.study || g.chat?.length) ? assess(`g:${t.id}:${i}`) : ''}
 </div>`
 }
@@ -542,18 +566,18 @@ ${(g.study || g.chat?.length) ? assess(`g:${t.id}:${i}`) : ''}
 const interviewPage = t => `${back('#/t/' + t.id)}<h1>${esc(title(t))}</h1>
 <div id=chat></div>
 <div id=controls class=composer>
-  <textarea id=answer rows=2 placeholder="语音或打字回答" oninput="grow(this)"></textarea>
-  <button id=mic class=primary onclick="toggleMic()">🎙 语音回答</button>
-  <button onclick="sendAnswer()">发送</button>
-  <button onclick="endInterview()">结束面试</button>
+  <textarea id=answer rows=2 placeholder="${esc(L('语音或打字回答', 'Speak or type your answer'))}" oninput="grow(this)"></textarea>
+  <button id=mic class=primary onclick="toggleMic()">${L('🎙 语音回答', '🎙 Speak')}</button>
+  <button onclick="sendAnswer()">${L('发送', 'Send')}</button>
+  <button onclick="endInterview()">${L('结束面试', 'End interview')}</button>
 </div>
 <div id=review></div>`
 
 const sessionPage = (t, sid) => {
   const s = t.sessions.find(s => s.id === sid)
   if (!s) return targetPage(t)
-  return `${back('#/t/' + t.id)}<h1>复盘 · ${new Date(s.date).toLocaleString()}</h1>${reviewHTML(s.review)}
-<h2>面试记录</h2>${s.messages.map(m => `<div class="msg ${m.role === 'assistant' ? 'assistant md' : m.role}">${m.role === 'assistant' ? md(m.content) : esc(m.content)}</div>`).join('')}`
+  return `${back('#/t/' + t.id)}<h1>${L('复盘', 'Debrief')} · ${new Date(s.date).toLocaleString()}</h1>${reviewHTML(s.review)}
+<h2>${L('面试记录', 'Interview transcript')}</h2>${s.messages.map(m => `<div class="msg ${m.role === 'assistant' ? 'assistant md' : m.role}">${m.role === 'assistant' ? md(m.content) : esc(m.content)}</div>`).join('')}`
 }
 
 function route() {
@@ -615,7 +639,7 @@ async function importPDF(file) {
       pages.push((await (await doc.getPage(i)).getTextContent()).items.map(x => x.str + (x.hasEOL ? '\n' : '')).join(''))
     }
     const text = pages.join('\n').trim()
-    if (!text) throw new Error('PDF 里没抽到文字（可能是扫描件），直接粘贴文字吧')
+    if (!text) throw new Error(L('PDF 里没抽到文字（可能是扫描件），直接粘贴文字吧', 'No text extracted from this PDF (probably a scan) — paste the text directly instead'))
     $('#resume').value = text
   })
 }
@@ -628,7 +652,7 @@ const saveResume = () => withBusy(async () => {
 
 function analyze() {
   const [company, role, jd] = ['#company', '#role', '#jd'].map(s => $(s).value.trim())
-  if (!company || !role || !jd) return alert('公司、岗位、JD 都要填')
+  if (!company || !role || !jd) return alert(L('公司、岗位、JD 都要填', 'Company, role and JD are all required'))
   const [, page, jobId] = location.hash.split('/') // 从岗位雷达建的，记下来源岗位
   withBusy(async () => {
     const t = { id: crypto.randomUUID(), company, role, jd, gaps: [], tailored: '', intel: '', sessions: [],
@@ -651,7 +675,7 @@ const tailor = id => withBusy(async () => {
 
 function addIntel(id) {
   const raw = $('#intel').value.trim()
-  if (!raw) return alert('先粘贴面经原文')
+  if (!raw) return alert(L('先粘贴面经原文', 'Paste the interview-experience text first'))
   withBusy(async () => {
     const t = target(id)
     const summary = await chat(P.intel(t), [{ role: 'user', content: raw }])
@@ -661,10 +685,10 @@ function addIntel(id) {
   })
 }
 
-const copyTailored = id => navigator.clipboard.writeText(target(id).tailored).then(() => alert('已复制'))
+const copyTailored = id => navigator.clipboard.writeText(target(id).tailored).then(() => alert(L('已复制', 'Copied')))
 
 function delTarget(id) {
-  if (!confirm('删除这个岗位和它的所有练习记录？')) return
+  if (!confirm(L('删除这个岗位和它的所有练习记录？', 'Delete this target role and all its mock sessions?'))) return
   withBusy(async () => {
     S.targets = S.targets.filter(t => t.id !== id)
     await save()
@@ -691,13 +715,13 @@ const yesterday = () => new Date(Date.now() - 86400e3).toLocaleString('sv-SE', {
 const resolveKey = k => {
   const [, type, a, b] = k.split(':')
   if (type === 'g') { const t = target(a), g = t?.gaps[+b]
-    return g ? { label: g.requirement, sub: `${t.company} · 追问`, href: `#/g/${a}/${b}` } : null }
+    return g ? { label: g.requirement, sub: `${t.company} · ${L('追问', 'follow-up')}`, href: `#/g/${a}/${b}` } : null }
   if (type === 'dq') { const d = domOf(a), q = (d?.quiz || '').split('\n').filter(Boolean)[+b]
-    return d && q ? { label: q, sub: `${d.name} · 建模题`, href: `#/d/${a}/${b}` } : null }
+    return d && q ? { label: q, sub: `${d.name} · ${L('建模题', 'design question')}`, href: `#/d/${a}/${b}` } : null }
   if (type === 'n') { const n = (S.notes || []).find(x => x.id === a)
-    return n ? { label: n.term, sub: '概念笔记', href: `#/nr/${a}` } : null }
+    return n ? { label: n.term, sub: L('概念笔记', 'Concept note'), href: `#/nr/${a}` } : null }
   if (type === 'ds') { const d = domOf(a), t = d?.outline?.[+b]
-    return d && t ? { label: t.t, sub: `${d.name} · 课程`, href: `#/ds/${a}/${b}` } : null }
+    return d && t ? { label: t.t, sub: `${d.name} · ${L('课程', 'course')}`, href: `#/ds/${a}/${b}` } : null }
   return null
 }
 const dueItems = () => Object.entries(S.practice?.items || {})
@@ -711,14 +735,14 @@ const wrongItems = () => {
   for (const t of S.targets || []) t.gaps.forEach((g, i) => {
     const key = `g:${t.id}:${i}`
     if (g.failed > 0 || S.practice?.items[key]?.m === 0)
-      out.push({ label: g.requirement, sub: `${t.company}${g.failed ? ` · 面试没答好 ×${g.failed}` : ''}`, href: `#/g/${t.id}/${i}` })
+      out.push({ label: g.requirement, sub: `${t.company}${g.failed ? ` · ${L(`面试没答好 ×${g.failed}`, `missed ×${g.failed}`)}` : ''}`, href: `#/g/${t.id}/${i}` })
   })
   for (const d of S.domains || []) (d.quiz || '').split('\n').filter(Boolean).forEach((q, qi) => {
     if (S.practice?.items[`dq:${d.id}:${qi}`]?.m === 0)
-      out.push({ label: q, sub: `${d.name} · 建模题`, href: `#/d/${d.id}/${qi}` })
+      out.push({ label: q, sub: `${d.name} · ${L('建模题', 'design question')}`, href: `#/d/${d.id}/${qi}` })
   })
   for (const n of S.notes || []) if (S.practice?.items[`n:${n.id}`]?.m === 0)
-    out.push({ label: n.term, sub: '概念笔记', href: `#/nr/${n.id}` })
+    out.push({ label: n.term, sub: L('概念笔记', 'Concept note'), href: `#/nr/${n.id}` })
   return out
 }
 const weekDone = () => [...Array(7)].reduce((a, _, i) => a + (S.practice?.log?.[new Date(Date.now() - i * 86400e3).toLocaleString('sv-SE', { timeZone: 'Asia/Shanghai' }).slice(0, 10)] || 0), 0)
@@ -738,10 +762,10 @@ function recordPractice(key, m) {
     route()
   })
 }
-const assess = key => `<div class=assess>练完自评：
-<button class="chip" onclick="recordPractice('${key}',0)">还不会</button>
-<button class="chip" onclick="recordPractice('${key}',1)">有点模糊</button>
-<button class="chip on" onclick="recordPractice('${key}',2)">掌握了</button></div>`
+const assess = key => `<div class=assess>${L('练完自评：', 'Self-rate:')}
+<button class="chip" onclick="recordPractice('${key}',0)">${L('还不会', "Don't know it")}</button>
+<button class="chip" onclick="recordPractice('${key}',1)">${L('有点模糊', 'Fuzzy')}</button>
+<button class="chip on" onclick="recordPractice('${key}',2)">${L('掌握了', 'Got it')}</button></div>`
 
 // ---------- 概念笔记本 ----------
 const noteOf = id => (S.notes || []).find(x => x.id === id)
@@ -750,14 +774,14 @@ const unmasteredNotes = () => (S.notes || []).filter(n => S.practice?.items[`n:$
 const notesPage = () => {
   const ns = S.notes || []
   const nm = S.practice?.items ? Object.keys(S.practice.items).filter(k => k.startsWith('n:') && S.practice.items[k].m === 2).length : 0
-  return `<h1>笔记本 <small>${ns.length} 条 · 已掌握 ${nm}</small></h1>
-${ns.length ? `<a class="btn primary wide" href="#/nr/${unmasteredNotes()[0]?.id || ns[0].id}">🃏 开始复习（剩 ${unmasteredNotes().length} 条）</a>` : '<small>阅读课程或 AI 回答时，选中文字即可「讲解」或「记笔记」</small>'}
+  return `<h1>${L('笔记本', 'Notes')} <small>${L(`${ns.length} 条 · 已掌握 ${nm}`, `${ns.length} notes · ${nm} mastered`)}</small></h1>
+${ns.length ? `<a class="btn primary wide" href="#/nr/${unmasteredNotes()[0]?.id || ns[0].id}">${L(`🃏 开始复习（剩 ${unmasteredNotes().length} 条）`, `🃏 Start review (${unmasteredNotes().length} left)`)}</a>` : `<small>${L('阅读课程或 AI 回答时，选中文字即可「讲解」或「记笔记」', 'While reading a course or AI answer, select text to "Explain" or "Save note"')}</small>`}
 ${[...ns].reverse().map(n => `<div class="card">
 <b>${esc(n.term)}</b> <small style="display:inline">${esc(n.src || '')}</small>
 ${n.note ? `<div class=md>${md(n.note)}</div>` : ''}
-<details><summary>讲解</summary><div class=md>${md(n.explain || '（还没生成讲解）')}</div></details>
-<details><summary>批注</summary><textarea id="nte-${n.id}" rows=3 placeholder="自己的话，写一遍记得更牢">${esc(n.note || '')}</textarea><button class="btn" onclick="saveNoteNote('${n.id}')">保存批注</button></details>
-<div class=chips><button class="chip" onclick="location.hash='#/nr/${n.id}'">复习这条</button><button class="chip" onclick="delNote('${n.id}')">删除</button></div>
+<details><summary>${L('讲解', 'Explanation')}</summary><div class=md>${md(n.explain || L('（还没生成讲解）', '(no explanation generated yet)'))}</div></details>
+<details><summary>${L('批注', 'My annotation')}</summary><textarea id="nte-${n.id}" rows=3 placeholder="${esc(L('自己的话，写一遍记得更牢', 'In your own words — writing it once makes it stick'))}">${esc(n.note || '')}</textarea><button class="btn" onclick="saveNoteNote('${n.id}')">${L('保存批注', 'Save annotation')}</button></details>
+<div class=chips><button class="chip" onclick="location.hash='#/nr/${n.id}'">${L('复习这条', 'Review this')}</button><button class="chip" onclick="delNote('${n.id}')">${L('删除', 'Delete')}</button></div>
 </div>`).join('')}`
 }
 
@@ -766,10 +790,10 @@ const noteReviewPage = id => {
   if (!n) return notesPage()
   const rest = unmasteredNotes()
   const next = rest.find(x => x.id !== id) || rest[0]
-  return `${back('#/notes', '笔记本')}<h1>🃏 概念闪卡</h1>
+  return `${back('#/notes', L('笔记本', 'Notes'))}<h1>${L('🃏 概念闪卡', '🃏 Concept flashcards')}</h1>
 <div class="card"><b style="font-size:20px">${esc(n.term)}</b><small>${esc(n.src || '')}</small></div>
-<details><summary style="font-size:16px">👆 心里过一遍，点这里看答案</summary><div class="card md">${md(n.explain || '（这条笔记没有讲解，点下面生成）')}</div></details>
-<div class=chips><button class="chip" onclick="genNoteExplain('${id}')">生成讲解</button>${next && next.id !== id ? `<button class="chip" onclick="location.hash='#/nr/${next.id}'">下一张 →</button>` : ''}</div>
+<details><summary style="font-size:16px">${L('👆 心里过一遍，点这里看答案', '👆 Recall it mentally, then tap to reveal')}</summary><div class="card md">${md(n.explain || L('（这条笔记没有讲解，点下面生成）', '(no explanation for this note yet — generate below)'))}</div></details>
+<div class=chips><button class="chip" onclick="genNoteExplain('${id}')">${L('生成讲解', 'Generate explanation')}</button>${next && next.id !== id ? `<button class="chip" onclick="location.hash='#/nr/${next.id}'">${L('下一张 →', 'Next →')}</button>` : ''}</div>
 ${assess(`n:${id}`)}
 `
 }
@@ -777,7 +801,7 @@ ${assess(`n:${id}`)}
 const genNoteExplain = id => withBusy(async () => {
   const n = noteOf(id)
   n.explain = await chat('你是资深架构师和面试辅导。用 2-4 句话通俗讲解给出的概念，最后单独一行「面试视角：」给一句要点。简洁，中文。',
-    [{ role: 'user', content: `概念：${n.term}\n来源：${n.src || ''}${projectsBlock()}` }])
+    [{ role: 'user', content: `${L('概念', 'Concept')}: ${n.term}\n${L('来源', 'Source')}: ${n.src || ''}${projectsBlock()}` }])
   await save()
   route()
 })
@@ -788,7 +812,7 @@ const saveNoteNote = id => withBusy(async () => {
   route()
 })
 function delNote(id) {
-  if (!confirm('删除这条笔记？')) return
+  if (!confirm(L('删除这条笔记？', 'Delete this note?'))) return
   withBusy(async () => {
     S.notes = (S.notes || []).filter(x => x.id !== id)
     delete S.practice?.items[`n:${id}`]
@@ -800,15 +824,15 @@ function delNote(id) {
 // ---------- 讲解历史：划词「讲解」每次生成的内容都自动记档 ----------
 const historyPage = () => {
   const es = [...(S.explains || [])].reverse() // 新的排前面
-  return `${back('#/me', '我的')}<h1>讲解历史 <small>${es.length} 条</small></h1>
+  return `${back('#/me', L('我的', 'Me'))}<h1>${L('讲解历史', 'Explanation history')} <small>${L(`${es.length} 条`, `${es.length} records`)}</small></h1>
 ${es.map(e => `<div class="card"><b>${esc(e.term)}</b> <small style="display:inline">${esc(e.src || '')} · ${new Date(e.at).toLocaleString()}</small>
 <div class=md>${md(e.explain || '')}</div>
-<div class=chips><button class="chip on" onclick="noteTerm(${esc(JSON.stringify(e.term))}, ${esc(JSON.stringify(e.explain || ''))}, ${esc(JSON.stringify(e.src || ''))})">📒 记到笔记</button></div></div>`).join('') || '<small>还没有讲解记录。阅读课程或 AI 回答时划词点「讲解」，每次都会记到这里</small>'}
-${es.length ? `<div class=footer><button class=danger onclick="clearExplains()">清空讲解历史</button></div>` : ''}`
+<div class=chips><button class="chip on" onclick="noteTerm(${esc(JSON.stringify(e.term))}, ${esc(JSON.stringify(e.explain || ''))}, ${esc(JSON.stringify(e.src || ''))})">${L('📒 记到笔记', '📒 Save to notes')}</button></div></div>`).join('') || `<small>${L('还没有讲解记录。阅读课程或 AI 回答时划词点「讲解」，每次都会记到这里', 'No explanations yet. Select text while reading and tap "Explain" — every one is logged here')}</small>`}
+${es.length ? `<div class=footer><button class=danger onclick="clearExplains()">${L('清空讲解历史', 'Clear explanation history')}</button></div>` : ''}`
 }
 
 function clearExplains() {
-  if (!confirm('清空全部讲解历史？')) return
+  if (!confirm(L('清空全部讲解历史？', 'Clear the entire explanation history?'))) return
   withBusy(async () => { S.explains = []; await save(); route() })
 }
 
@@ -816,28 +840,29 @@ function clearExplains() {
 const practicePage = () => {
   const due = dueItems(), wrong = wrongItems()
   const P = S.practice || {}
-  return `<h1>练习</h1>
+  return `<h1>${L('练习', 'Practice')}</h1>
 <div class="tiles sm">
-  <div class="card tile"><small>待复习</small><b class="${due.length ? 'hot' : ''}">${due.length}</b></div>
-  <div class="card tile"><small>错题</small><b class="${wrong.length ? 'hot' : ''}">${wrong.length}</b></div>
-  <div class="card tile"><small>今日已练</small><b>${P.log?.[today()] || 0}</b></div>
-  <div class="card tile"><small>连续</small><b>${P.streak || 0}<i>天</i></b></div>
+  <div class="card tile"><small>${L('待复习', 'Due')}</small><b class="${due.length ? 'hot' : ''}">${due.length}</b></div>
+  <div class="card tile"><small>${L('错题', 'Mistakes')}</small><b class="${wrong.length ? 'hot' : ''}">${wrong.length}</b></div>
+  <div class="card tile"><small>${L('今日已练', 'Done today')}</small><b>${P.log?.[today()] || 0}</b></div>
+  <div class="card tile"><small>${L('连续', 'Streak')}</small><b>${P.streak || 0}<i>${L('天', 'd')}</i></b></div>
 </div>
-<h2>今日待复习 <small>到期的知识点，不会的排前面</small></h2>
-${due.slice(0, 12).map(x => `<a class="row more" href="${x.href}"><b>${x.m === 0 ? '❌' : x.m === 1 ? '⚠️' : '✅'} ${esc(x.label)}</b><small>${esc(x.sub)}</small></a>`).join('') || '<small>今天没有到期的复习，练下面的领域卡或等每日一题</small>'}
-<h2>错题本 <small>面试没答好的和自评「还不会」的</small></h2>
-${wrong.slice(0, 12).map(x => `<a class="row more" href="${x.href}"><b>${esc(x.label)}</b><small>${esc(x.sub)}</small></a>`).join('') || '<small>还没有错题，保持</small>'}
-<h2>领域卡 <small>本周共练 ${weekDone()} 次 · 概念笔记 ${S.notes?.length || 0} 条</small></h2>
+<h2>${L('今日待复习', 'Due today')} <small>${L('到期的知识点，不会的排前面', 'Due items, weakest first')}</small></h2>
+${due.slice(0, 12).map(x => `<a class="row more" href="${x.href}"><b>${x.m === 0 ? '❌' : x.m === 1 ? '⚠️' : '✅'} ${esc(x.label)}</b><small>${esc(x.sub)}</small></a>`).join('') || `<small>${L('今天没有到期的复习，练下面的领域卡或等每日一题', 'Nothing due today — practice a domain card below or wait for the daily question')}</small>`}
+<h2>${L('错题本', 'Mistakes')} <small>${L('面试没答好的和自评「还不会」的', 'Missed in mocks, or self-rated "not yet"')}</small></h2>
+${wrong.slice(0, 12).map(x => `<a class="row more" href="${x.href}"><b>${esc(x.label)}</b><small>${esc(x.sub)}</small></a>`).join('') || `<small>${L('还没有错题，保持', 'No mistakes — keep it up')}</small>`}
+<h2>${L('领域卡', 'Domain cards')} <small>${L(`本周共练 ${weekDone()} 次 · 概念笔记 ${S.notes?.length || 0} 条`, `${weekDone()} reps this week · ${S.notes?.length || 0} notes`)}</small></h2>
 ${(S.domains || []).map(d => { const ol = d.outline || []
   const m = ol.filter((_, i) => S.practice?.items[`ds:${d.id}:${i}`]?.m === 2).length
-  return `<a class="row more" href="#/d/${d.id}"><b>${esc(d.name)}</b><small>${ol.length ? `课程 ${m}/${ol.length} 节 · ` : ''}${(d.quiz || '').split('\n').filter(Boolean).length} 道建模题</small></a>` }).join('')} || '<small>还没有领域卡，到目标岗位页「从 JD 识别领域」后生成</small>'}
-<a class="btn primary wide" href="#/d/new">＋ 添加领域</a>`
+  const qn = (d.quiz || '').split('\n').filter(Boolean).length
+  return `<a class="row more" href="#/d/${d.id}"><b>${esc(d.name)}</b><small>${ol.length ? L(`课程 ${m}/${ol.length} 节 · `, `Course ${m}/${ol.length} · `) : ''}${L(`${qn} 道建模题`, `${qn} design questions`)}</small></a>` }).join('') || `<small>${L('还没有领域卡，到目标岗位页「从 JD 识别领域」后生成', "No domain cards yet — generate from a target role's JD")}</small>`}
+<a class="btn primary wide" href="#/d/new">${L('＋ 添加领域', '+ Add domain')}</a>`
 }
 
 // ---------- 领域建模 ----------
 const domOf = id => S.domains?.find(x => x.id === id)
-// 知识卡的「面试常见建模题」段抽出来当题库（到下一个 ## 为止，避免混入通用陷阱）
-const quizOf = facts => { const seg = String(facts).split('面试常见建模题')[1]?.split('##')[0] || ''
+// 知识卡的「面试常见建模题」段抽出来当题库（到下一个 ## 为止，避免混入通用陷阱）；英文界面下标题被翻成英文，两种写法都认
+const quizOf = facts => { const seg = String(facts).split(/面试常见建模题|[Mm]odeling [Qq]uestion/)[1]?.split('##')[0] || ''
   return seg.split('\n').map(x => x.trim()).filter(x => x.startsWith('- ')).map(x => x.slice(2)).join('\n') }
 
 function detectDomains(tid) {
@@ -872,7 +897,7 @@ const genDomainFromTarget = (tid, i) => withBusy(async () => {
 
 const addDomain = () => withBusy(async () => {
   const name = $('#dname').value.trim()
-  if (!name) return alert('领域名要填')
+  if (!name) return alert(L('领域名要填', 'Domain name is required'))
   S.domains ??= []
   const facts = $('#dfacts').value.trim()
   S.domains.push({ id: crypto.randomUUID(), name, facts, quiz: quizOf(facts), chat: [] })
@@ -892,7 +917,7 @@ const saveDomainFacts = id => withBusy(async () => {
 const genOutline = id => withBusy(async () => {
   const d = domOf(id)
   const r = await askJSON(P.outlineGen, `领域：${d.name}${projectsBlock()}`)
-  if (!Array.isArray(r.sections) || !r.sections.length) throw new Error('大纲格式不对，再试一次')
+  if (!Array.isArray(r.sections) || !r.sections.length) throw new Error(L('大纲格式不对，再试一次', 'Unexpected outline format, try again'))
   d.outline = r.sections.map(x => ({ t: String(x.t).slice(0, 40) }))
   await save()
   route()
@@ -912,7 +937,7 @@ function drillSection(id, i) {
   const d = domOf(id), sec = d.sections?.[i]
   if (!sec) return
   location.hash = '#/d/' + id
-  askDrill(id, `就下面这节课程的内容出题考我：先出一道相关的题（设计或概念辨析），我答完后追问 2-3 层再点评。\n\n<本节内容>\n${sec.content}\n</本节内容>`)
+  askDrill(id, L(`就下面这节课程的内容出题考我：先出一道相关的题（设计或概念辨析），我答完后追问 2-3 层再点评。\n\n<本节内容>\n${sec.content}\n</本节内容>`, `Quiz me on this course section: pose one related question (design or concept discrimination), follow up 2-3 layers after I answer, then critique.\n\n<section>\n${sec.content}\n</section>`))
 }
 
 function askDrillSend(id) {
@@ -932,7 +957,7 @@ function askDrill(id, text) {
   })
 }
 function clearDrill(id) {
-  if (!confirm('清空这个领域的对话？')) return
+  if (!confirm(L('清空这个领域的对话？', 'Clear the chat for this domain?'))) return
   withBusy(async () => { domOf(id).chat = []; await save(); route() })
 }
 
@@ -944,7 +969,7 @@ async function markJob(id, s) {
   const y = scrollY
   route()
   scrollTo(0, y)
-  try { await save() } catch (e) { alert('保存失败：' + e.message) }
+  try { await save() } catch (e) { alert(L('保存失败：', 'Save failed: ') + e.message) }
 }
 
 // ---------- 行情：岗位库统计（单色横条，标签用文字色） ----------
@@ -955,12 +980,12 @@ const med = a => { if (!a.length) return null; const s = [...a].sort((x, y) => x
 const tiles = a => `<div class=tiles>${a.map(([k, v]) => `<div class="card tile"><small>${k}</small><b>${v}</b></div>`).join('')}</div>`
 const bars = (rows, unit = '') => { const max = Math.max(...rows.map(r => r[1]), 1)
   return rows.map(([k, v]) => `<div class=mrow><span class=mlbl title="${esc(k)}">${esc(k)}</span><span class=mtrack><span class=mfill style="width:${Math.max(2, Math.round(v / max * 100))}%"></span></span><span class=mval>${v}${unit}</span></div>`).join('') }
-const group = (m, key, val) => { const g = {}; for (const j of m) { const k = key(j) || '其他'; (g[k] ??= []).push(val(j)) } return g }
+const group = (m, key, val) => { const g = {}; for (const j of m) { const k = key(j) || L('其他', 'Other'); (g[k] ??= []).push(val(j)) } return g }
 
 const marketPage = () => {
-  if (J === null || J === false) return `${back('#/jobs', '岗位')}<h1>行情</h1>${J === null ? loading() : '<small>没有岗位数据</small>'}`
+  if (J === null || J === false) return `${back('#/jobs', L('岗位', 'Jobs'))}<h1>${L('行情', 'Market')}</h1>${J === null ? loading() : `<small>${L('没有岗位数据', 'No job data')}</small>`}`
   const m = J.filter(j => j.matched)
-  if (!m.length) return `${back('#/')}<h1>行情</h1><small>还没有符合条件的岗位</small>`
+  if (!m.length) return `${back('#/')}<h1>${L('行情', 'Market')}</h1><small>${L('还没有符合条件的岗位', 'No matching jobs yet')}</small>`
   const pay = m.map(j => j.salary_max_k).filter(v => v != null)
   const nm = m.length - pay.length
   const bonus = m.map(j => (j.salary_desc || '').match(/·(\d+)薪/)?.[1]).filter(Boolean)
@@ -970,18 +995,18 @@ const marketPage = () => {
   const skillG = group(m.flatMap(j => (j.skills || '').split(',').filter(Boolean).map(s => [s, j])), x => x[0], x => 1)
   const skillRows = topN(Object.entries(skillG).map(([k, v]) => [k, v.length]), 15).map(([k, n]) => [k, n])
   const areaRows = topN(Object.entries(group(m, j => [j.area, j.business_area].filter(Boolean).join('·'), () => 1)).map(([k, v]) => [k, v.length]), 8)
-  return `${back('#/jobs', '岗位')}<h1>行情 <small>符合条件 ${m.length} 个岗位</small></h1>
-${tiles([['薪资上限中位数', med(pay) ? med(pay) + 'K' : '—'], ['前 25%', (pct(pay, .75) ?? '—') + (pct(pay, .75) ? 'K' : '')], ['面议', nm ? nm + ' 个' : '无'], ['常见年终', bonusMode ? '·' + bonusMode + '薪' : '—']])}
-<h2>薪资上限分布</h2>
-${bars([['40-50K', pay.filter(v => v < 50).length], ['50-60K', pay.filter(v => v >= 50 && v < 60).length], ['60-70K', pay.filter(v => v >= 60 && v < 70).length], ['70-80K', pay.filter(v => v >= 70 && v < 80).length], ['80K+', pay.filter(v => v >= 80).length]], ' 个')}
-<h2>经验要求 <small>条后是薪资上限中位数</small></h2>
-${expRows.map(([k, n, md]) => `<div class=mrow><span class=mlbl>${esc(k)}</span><span class=mtrack><span class=mfill style="width:${Math.max(2, Math.round(n / expRows[0][1] * 100))}%"></span></span><span class=mval>${n} 个${md ? ' · ' + md + 'K' : ''}</span></div>`).join('')}
-<h2>技能要求 TOP15 <small>占符合条件岗位比例</small></h2>
+  return `${back('#/jobs', L('岗位', 'Jobs'))}<h1>${L('行情', 'Market')} <small>${L(`符合条件 ${m.length} 个岗位`, `${m.length} matching jobs`)}</small></h1>
+${tiles([[L('薪资上限中位数', 'Median top salary'), med(pay) ? med(pay) + 'K' : '—'], [L('前 25%', 'Top 25%'), (pct(pay, .75) ?? '—') + (pct(pay, .75) ? 'K' : '')], [L('面议', 'Negotiable'), nm ? L(`${nm} 个`, `${nm} jobs`) : L('无', 'None')], [L('常见年终', 'Typical bonus'), bonusMode ? L(`·${bonusMode}薪`, `·${bonusMode} months`) : '—']])}
+<h2>${L('薪资上限分布', 'Top-salary distribution')}</h2>
+${bars([['40-50K', pay.filter(v => v < 50).length], ['50-60K', pay.filter(v => v >= 50 && v < 60).length], ['60-70K', pay.filter(v => v >= 60 && v < 70).length], ['70-80K', pay.filter(v => v >= 70 && v < 80).length], ['80K+', pay.filter(v => v >= 80).length]], L(' 个', ' jobs'))}
+<h2>${L('经验要求', 'Experience required')} <small>${L('条后是薪资上限中位数', 'count followed by median top salary')}</small></h2>
+${expRows.map(([k, n, md]) => `<div class=mrow><span class=mlbl>${esc(k)}</span><span class=mtrack><span class=mfill style="width:${Math.max(2, Math.round(n / expRows[0][1] * 100))}%"></span></span><span class=mval>${L(`${n} 个`, `${n} jobs`)}${md ? ' · ' + md + 'K' : ''}</span></div>`).join('')}
+<h2>${L('技能要求 TOP15', 'Top 15 skills')} <small>${L('占符合条件岗位比例', 'share of matching jobs')}</small></h2>
 ${bars(skillRows.map(([k, n]) => [k, Math.round(n / m.length * 100) + '%']), '')}
-<h2>区域分布</h2>
-${bars(areaRows, ' 个')}
-<h2>公司规模</h2>
-${bars(topN(Object.entries(group(m, j => j.brand_scale, () => 1)).map(([k, v]) => [k, v.length]), 6), ' 个')}`
+<h2>${L('区域分布', 'Areas')}</h2>
+${bars(areaRows, L(' 个', ' jobs'))}
+<h2>${L('公司规模', 'Company size')}</h2>
+${bars(topN(Object.entries(group(m, j => j.brand_scale, () => 1)).map(([k, v]) => [k, v.length]), 6), L(' 个', ' jobs'))}`
 }
 
 // ---------- 差距详情：概念讲解 + 回答思路 + 追问 ----------
@@ -993,7 +1018,7 @@ const genStudy = (force = false) => withBusy(async () => {
   if (!g || (g.study && !force)) return
   const r = await askJSON(P.study, `${P.material(t)}\n\n<要求>${g.requirement}</要求>\n<简历证据>${g.evidence || '无'}</简历证据>\n<追问>${g.probe}</追问>`)
   const fresh = curGap().g
-  if (!fresh || !Array.isArray(r.concepts)) throw new Error('AI 返回格式不对，再试一次')
+  if (!fresh || !Array.isArray(r.concepts)) throw new Error(L('AI 返回格式不对，再试一次', 'AI returned an unexpected format, try again'))
   fresh.study = { concepts: r.concepts, approach: r.approach }
   await save()
   route()
@@ -1013,11 +1038,11 @@ function askGap(text = $('#answer').value.trim()) {
   })
 }
 const grow = el => { el.style.height = 'auto'; el.style.height = Math.min(el.scrollHeight, 180) + 'px' }
-const askConcept = k => askGap(`详细讲讲「${curGap().g.study.concepts[k].name}」：原理、和这道追问的关系、面试官常见的深挖点。`)
-const askPreset = k => k === 2 ? $('#answer').focus() : askGap(ASKS[k])
+const askConcept = k => askGap(L(`详细讲讲「${curGap().g.study.concepts[k].name}」：原理、和这道追问的关系、面试官常见的深挖点。`, `Explain "${curGap().g.study.concepts[k].name}" in depth: how it works, how it relates to this follow-up, and where interviewers typically dig deeper.`))
+const askPreset = k => k === 2 ? $('#answer').focus() : askGap(ASKS()[k])
 
 function clearGapChat() {
-  if (!confirm('清空这一条的对话记录？')) return
+  if (!confirm(L('清空这一条的对话记录？', 'Clear the chat for this requirement?'))) return
   withBusy(async () => {
     curGap().g.chat = []
     await save()
@@ -1029,9 +1054,10 @@ function clearGapChat() {
 let iv = null // { t, messages, review }
 
 function startInterview(t) {
-  iv = { t, messages: [{ role: 'assistant', content: P.greeting }] }
+  const g = P.greeting()
+  iv = { t, messages: [{ role: 'assistant', content: g }] }
   renderChat()
-  speak(P.greeting)
+  speak(g)
 }
 
 function renderChat() {
@@ -1055,15 +1081,15 @@ function sendAnswer() {
 }
 
 function endInterview() {
-  if (iv.messages.length < 3) return alert('至少答一轮再结束')
+  if (iv.messages.length < 3) return alert(L('至少答一轮再结束', 'Answer at least one round before ending'))
   stopVoice()
   withBusy(async () => {
-    const transcript = iv.messages.map(m => (m.role === 'user' ? '候选人' : '面试官') + '：' + m.content).join('\n')
+    const transcript = iv.messages.map(m => (m.role === 'user' ? L('候选人', 'Candidate') : L('面试官', 'Interviewer')) + L('：', ': ') + m.content).join('\n')
     iv.review = await askJSON(P.review(iv.t), transcript)
     $('#controls').hidden = true
-    $('#review').innerHTML = `<h2>复盘</h2>${reviewHTML(iv.review, true)}
-<p>自评这一轮后保存：</p>${[1, 2, 3, 4, 5].map(n => `<button onclick="saveSession(${n})">${'★'.repeat(n)}</button>`).join('')}
-<button class=danger onclick="location.hash='#/t/${iv.t.id}'">丢弃</button>`
+    $('#review').innerHTML = `<h2>${L('复盘', 'Debrief')}</h2>${reviewHTML(iv.review, true)}
+<p>${L('自评这一轮后保存：', 'Rate this round to save:')}</p>${[1, 2, 3, 4, 5].map(n => `<button onclick="saveSession(${n})">${'★'.repeat(n)}</button>`).join('')}
+<button class=danger onclick="location.hash='#/t/${iv.t.id}'">${L('丢弃', 'Discard')}</button>`
     $('#review').scrollIntoView()
   })
 }
@@ -1087,28 +1113,28 @@ let rec = null
 function speak(text) {
   speechSynthesis.cancel()
   const u = new SpeechSynthesisUtterance(text)
-  u.lang = 'zh-CN'
+  u.lang = voiceLang()
   speechSynthesis.speak(u)
 }
 
 function toggleMic() {
   if (rec) { rec.sendOnEnd = true; return rec.stop() } // 等最后一段结果到了再在 onend 里发送
-  if (!SR) return alert('这个浏览器不支持语音识别，换 Safari / Chrome，或者直接打字')
+  if (!SR) return alert(L('这个浏览器不支持语音识别，换 Safari / Chrome，或者直接打字', 'This browser does not support speech recognition — use Safari/Chrome, or just type'))
   speechSynthesis.cancel()
   const r = rec = new SR()
-  r.lang = 'zh-CN'
+  r.lang = voiceLang()
   r.continuous = true
   r.interimResults = true
   const before = $('#answer').value
   r.onresult = e => { $('#answer').value = before + [...e.results].map(x => x[0].transcript).join('') }
-  r.onerror = e => { if (!['aborted', 'no-speech'].includes(e.error)) alert('语音识别出错：' + e.error) }
+  r.onerror = e => { if (!['aborted', 'no-speech'].includes(e.error)) alert(L('语音识别出错：', 'Speech recognition error: ') + e.error) }
   r.onend = () => {
     rec = null
-    if ($('#mic')) $('#mic').textContent = '🎙 语音回答'
+    if ($('#mic')) $('#mic').textContent = L('🎙 语音回答', '🎙 Speak')
     if (r.sendOnEnd) sendAnswer()
   }
   r.start()
-  $('#mic').textContent = '⏹ 说完了'
+  $('#mic').textContent = L('⏹ 说完了', '⏹ Done')
 }
 
 function stopVoice() {
@@ -1136,7 +1162,7 @@ load().then(() => {
   const editing = /INPUT|TEXTAREA/.test(document.activeElement?.tagName || '')
   if (!editing) route()
 }).catch(e => {
-  $('#app').innerHTML = `<div class=loading><span class=spin></span><small>连不上服务器：${esc(e.message)}</small><button class=btn onclick="location.reload()">重试</button></div>`
+  $('#app').innerHTML = `<div class=loading><span class=spin></span><small>${L('连不上服务器：', 'Cannot reach server: ')}${esc(e.message)}</small><button class=btn onclick="location.reload()">${L('重试', 'Retry')}</button></div>`
 })
 // 岗位数据单独拉，慢了也不挡首页
 loadJobs().then(() => { if (onHome() || /^#\/(jobs|new\/|market)/.test(location.hash)) route() })
