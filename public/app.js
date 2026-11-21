@@ -55,20 +55,22 @@ function explainTerm(term, src) {
     const from = src || selInfo?.src || L('阅读中', 'Reading')
     const explain = await chat(`你是资深架构师和面试辅导。用 2-4 句话通俗讲解给出的概念，候选人系统档案里有对应实践就对照着讲；最后单独一行「面试视角：」给一句最关键的要点。简洁，中文。`,
       [{ role: 'user', content: `${L('概念', 'Concept')}: ${term}\n${L('来源', 'Source')}: ${from}${projectsBlock()}` }])
-    showSheet(term, explain, from)
-    // 每次讲解都入历史（同一个词重复讲也各记一条，靠时间区分）
+    // 每次讲解都入历史（同一个词重复讲也各记一条，靠时间区分）；sheet 直接展示这份记录，译文也挂在它上面
     S.explains ??= []
-    S.explains.push({ id: crypto.randomUUID(), term, explain, src: from, at: new Date().toISOString() })
+    const rec = { id: crypto.randomUUID(), term, explain, src: from, at: new Date().toISOString() }
+    S.explains.push(rec)
+    showSheet(rec)
     await save()
   })
 }
 
 // pin：固定期间讲解区不收起、层级最上，拖到哪儿就停哪儿；取消 pin 回默认底部
 let sheetPin = false
-function showSheet(term, explain, src) {
+function showSheet(rec) {
   const sh = $('#sheet')
-  sh.innerHTML = `<div class="card md"><div class=shead id=shead><span class=shandle><b>${esc(term)}</b> <small style="display:inline">${esc(src)}</small></span><button class="chip ${sheetPin ? 'on' : ''}" onclick="togglePin()">📌</button></div>${md(explain)}
-<div class=chips><button class="chip on" onclick="noteTerm(${esc(JSON.stringify(term))}, '', ${esc(JSON.stringify(src))})">${L('📒 记到笔记', '📒 Save to notes')}</button><button class="chip" onclick="location.hash='#/history'">${L('🕘 历史', '🕘 History')}</button><button class="chip" onclick="hideSheet()">${L('收起', 'Dismiss')}</button></div></div>`
+  sh.innerHTML = `<div class="card md"><div class=shead id=shead><span class=shandle><b>${esc(rec.term)}</b> <small style="display:inline">${esc(rec.src)}</small></span><button class="chip ${sheetPin ? 'on' : ''}" onclick="togglePin()">📌</button></div>${md(rec.explain)}
+${rec.en != null ? `<div class="md tren">${md(rec.en)}</div>` : transHTML(rec, `trExplain(this, '${rec.id}')`)}
+<div class=chips><button class="chip on" onclick="noteTerm(${esc(JSON.stringify(rec.term))}, '', ${esc(JSON.stringify(rec.src))})">${L('📒 记到笔记', '📒 Save to notes')}</button><button class="chip" onclick="location.hash='#/history'">${L('🕘 历史', '🕘 History')}</button><button class="chip" onclick="hideSheet()">${L('收起', 'Dismiss')}</button></div></div>`
   sh.classList.add('show')
   bindSheetDrag()
 }
@@ -156,13 +158,12 @@ const loadJobs = () => api('/api/jobs').then(j => {
   J = j
   cache.write({ state: S, jobs: j })
 }, () => { J = false })
-// AI 输出语言跟随界面：指令追加在 system 末尾、优先级最高（英文模式要压过 prompt 正文里写死的「中文」）
-const langDirective = () => langState() === 'en'
-  ? '\n\n[Output language: ENGLISH. This overrides any language instruction above — write the entire response in English.]'
-  : '\n\n（回答请全程使用中文。）'
-const chat = async (system, messages) => (await api('/api/chat', { system: system + langDirective(), messages })).content
+// AI 一律中文回答：界面语言只管 UI 文案，不影响 AI 输出语言（英文界面 + 中文 AI 回答并存）。
+// 指令追加在 system 末尾、优先级最高（要压过 prompt 正文里写死的语言要求）
+const zhDirective = '\n\n（回答请全程使用中文。）'
+const chat = async (system, messages) => (await api('/api/chat', { system: system + zhDirective, messages })).content
 async function askJSON(system, user) {
-  const { content } = await api('/api/chat', { system: system + langDirective(), messages: [{ role: 'user', content: user }], json: true })
+  const { content } = await api('/api/chat', { system: system + zhDirective, messages: [{ role: 'user', content: user }], json: true })
   try { return JSON.parse(content.replace(/```json|```/g, '').trim()) } catch { throw new Error(L('AI 返回格式不对，再试一次', 'AI returned an unexpected format, try again')) }
 }
 const target = id => S.targets.find(t => t.id === id)
@@ -177,6 +178,42 @@ async function withBusy(fn) {
   const tick = setInterval(() => { const el = $('#busysec'); if (el) el.textContent = Math.round((Date.now() - t0) / 1000) + ' s' }, 1000)
   try { await fn() } catch (e) { alert(e.message) } finally { busy = false; clearInterval(tick); document.body.classList.remove('busy') }
 }
+
+// ---------- 按需翻译：对话消息与划词讲解的「译 EN」，译文存记录的 en 字段随 state 持久化 ----------
+// 翻译按钮就地把自身替换成英文区，不整页重画（不打断输入框草稿和滚动位置）；已译（en 非空）不再调 LLM
+async function translateRec(btn, rec) {
+  if (!rec || rec.en != null) return
+  withBusy(async () => {
+    btn.disabled = true
+    btn.textContent = L('译 EN…', 'Translating…')
+    try {
+      // 翻译要输出英文，绕开 chat() 的恒定中文指令，单独直调
+      const { content } = await api('/api/chat', { system: P.trans, messages: [{ role: 'user', content: rec.explain ?? rec.content }] })
+      rec.en = content
+      await save()
+      btn.outerHTML = `<div class="md tren">${md(rec.en)}</div>`
+    } finally {
+      // save 抛错时上面的 outerHTML 替换不会执行、按钮仍挂在 DOM 上停在忙碌态：
+      // en 已有值就就地补上英文区（与切页重画所见一致，也避免恢复出一个点了没反应的按钮——
+      // 顶部 en!=null 守卫会拦住重译）；否则（LLM 调用失败）恢复按钮可再点。
+      // save 成功时按钮已被 outerHTML 替换脱离 DOM（isConnected=false），无事可做。
+      if (btn.isConnected) {
+        if (rec.en == null) { btn.disabled = false; btn.textContent = L('译 EN', 'Translate to EN') }
+        else btn.outerHTML = transHTML(rec)
+      }
+    }
+  })
+}
+// 各页按钮的数据定位：点击时从 S 现取（切页/重载后仍指向最新对象）
+const trGapMsg = (btn, i) => translateRec(btn, curGap().g?.chat?.[i])
+const trDrillMsg = (btn, id, i) => translateRec(btn, domOf(id)?.chat?.[i])
+const trIvMsg = (btn, i) => translateRec(btn, iv?.messages?.[i])
+const trSessionMsg = (btn, tid, sid, i) => translateRec(btn, target(tid)?.sessions?.find(s => s.id === sid)?.messages?.[i])
+const trExplain = (btn, id) => translateRec(btn, (S.explains || []).find(e => e.id === id))
+// 未译给按钮（stopPropagation：别触发消息气泡上的朗读），已译给中文下方的英文区
+const transHTML = (rec, onclick) => rec.en != null
+  ? `<div class="md tren">${md(rec.en)}</div>`
+  : `<button class="chip" onclick="event.stopPropagation();${onclick}">${L('译 EN', 'Translate to EN')}</button>`
 
 // ---------- Prompts ----------
 // 项目档案：从公司机器的会话历史和仓库提取的「事实卡」，AI 回答只允许引用这里的真实细节
@@ -260,6 +297,7 @@ ${g.requirement}
 ${d.facts || '（还没有知识卡内容）'}
 </领域知识卡>${projectsBlock()}`,
   greeting: () => L('你好，我是今天的面试官。先做个简单的自我介绍吧，重点讲讲和这个岗位相关的经历。', "Hi, I'm today's interviewer. Let's start with a quick self-introduction — focus on the experience most relevant to this role."),
+  trans: `你是翻译引擎。把用户给的中文内容忠实译成英文：只输出译文本身，不解释、不增删、不改写，保留原有的 markdown 结构。`,
 }
 
 // ---------- 页面 ----------
@@ -383,7 +421,7 @@ ${d.outline ? d.outline.map((x, i) => `<a class="row more" href="#/ds/${d.id}/${
 <button onclick="genDomainCard('${d.id}')">${d.facts ? L('重新生成知识卡', 'Regenerate knowledge card') : L('生成知识卡', 'Generate knowledge card')}</button>
 <details><summary>${L('编辑', 'Edit')}</summary><textarea id=dfacts rows=16>${esc(d.facts || '')}</textarea><button onclick="saveDomainFacts('${d.id}')">${L('保存', 'Save')}</button></details></details>
 <h2>${L('考我', 'Quiz me')} <small>${L('AI 出建模题，答完追问再点评', 'AI poses a design question, follows up, then critiques')}</small>${d.chat?.length ? `<button class="link danger" onclick="clearDrill('${d.id}')">${L('清空对话', 'Clear chat')}</button>` : ''}</h2>
-<div id=chat>${(d.chat || []).map(m => m.role === 'user' ? `<div class="msg user">${esc(m.content)}</div>` : `<div class="msg assistant md">${md(m.content)}</div>`).join('') || `<small>${L('点「出一道建模题」开始', 'Tap "Give me a question" to start')}</small>`}</div>
+<div id=chat>${(d.chat || []).map((m, i) => m.role === 'user' ? `<div class="msg user">${esc(m.content)}</div>` : `<div class="msg assistant md">${md(m.content)}${transHTML(m, `trDrillMsg(this, '${d.id}', ${i})`)}</div>`).join('') || `<small>${L('点「出一道建模题」开始', 'Tap "Give me a question" to start')}</small>`}</div>
 <div class=composer>
 <div class=chips><button class=chip onclick="askDrill('${d.id}', '${L('出一道建模题', 'Give me a question')}')">${L('出一道建模题', 'Give me a question')}</button><button class=chip onclick="askDrill('${d.id}', '${L('换一道更难或更偏工程落地的', 'A harder or more engineering-heavy one')}')">${L('换一道难的', 'A harder one')}</button></div>
 <div class=bar><textarea id=answer rows=1 placeholder="${esc(L('答它出的题，或直接描述你的方案让它点评', 'Answer its question, or describe your design for critique'))}" oninput="grow(this)"></textarea><button class=primary onclick="askDrillSend('${d.id}')">${L('发送', 'Send')}</button></div>
@@ -555,7 +593,7 @@ ${st ? `<div class=concepts>${st.concepts.map((c, k) => `<a class="card more" hr
 <h2>${L('回答思路', 'Answer approach')} ${st ? `<button class=link onclick="genStudy(true)">${L('重新生成', 'Regenerate')}</button>` : ''}</h2>
 ${st ? `<div class="card md">${md(txt(st.approach))}</div>` : `<small>${L('生成中…', 'Generating…')}</small>`}
 <h2>${L('问 AI', 'Ask AI')} ${g.chat?.length ? `<button class="link danger" onclick="clearGapChat()">${L('清空对话', 'Clear chat')}</button>` : ''}</h2>
-<div id=chat>${(g.chat || []).map(m => m.role === 'user' ? `<div class="msg user">${esc(m.content)}</div>` : `<div class="msg assistant md">${md(m.content)}</div>`).join('') || `<small>${L('点上面的概念，或用下面的快捷提问开始', 'Tap a concept above, or use a quick prompt below')}</small>`}</div>
+<div id=chat>${(g.chat || []).map((m, i) => m.role === 'user' ? `<div class="msg user">${esc(m.content)}</div>` : `<div class="msg assistant md">${md(m.content)}${transHTML(m, `trGapMsg(this, ${i})`)}</div>`).join('') || `<small>${L('点上面的概念，或用下面的快捷提问开始', 'Tap a concept above, or use a quick prompt below')}</small>`}</div>
 <div class=composer>
 <div class=chips>${ASKS().map((q, k) => `<button class=chip onclick="askPreset(${k})">${esc(q)}</button>`).join('')}</div>
 <div class=bar><textarea id=answer rows=1 placeholder="${esc(L('问 AI，或写下你的回答让它点评', 'Ask AI, or write your answer for critique'))}" oninput="grow(this)"></textarea><button class=primary onclick="askGap()">${L('发送', 'Send')}</button></div>
@@ -577,7 +615,7 @@ const sessionPage = (t, sid) => {
   const s = t.sessions.find(s => s.id === sid)
   if (!s) return targetPage(t)
   return `${back('#/t/' + t.id)}<h1>${L('复盘', 'Debrief')} · ${new Date(s.date).toLocaleString()}</h1>${reviewHTML(s.review)}
-<h2>${L('面试记录', 'Interview transcript')}</h2>${s.messages.map(m => `<div class="msg ${m.role === 'assistant' ? 'assistant md' : m.role}">${m.role === 'assistant' ? md(m.content) : esc(m.content)}</div>`).join('')}`
+<h2>${L('面试记录', 'Interview transcript')}</h2>${s.messages.map((m, i) => `<div class="msg ${m.role === 'assistant' ? 'assistant md' : m.role}">${m.role === 'assistant' ? md(m.content) + transHTML(m, `trSessionMsg(this, '${t.id}', '${s.id}', ${i})`) : esc(m.content)}</div>`).join('')}`
 }
 
 function route() {
@@ -827,6 +865,7 @@ const historyPage = () => {
   return `${back('#/me', L('我的', 'Me'))}<h1>${L('讲解历史', 'Explanation history')} <small>${L(`${es.length} 条`, `${es.length} records`)}</small></h1>
 ${es.map(e => `<div class="card"><b>${esc(e.term)}</b> <small style="display:inline">${esc(e.src || '')} · ${new Date(e.at).toLocaleString()}</small>
 <div class=md>${md(e.explain || '')}</div>
+${transHTML(e, `trExplain(this, '${e.id}')`)}
 <div class=chips><button class="chip on" onclick="noteTerm(${esc(JSON.stringify(e.term))}, ${esc(JSON.stringify(e.explain || ''))}, ${esc(JSON.stringify(e.src || ''))})">${L('📒 记到笔记', '📒 Save to notes')}</button></div></div>`).join('') || `<small>${L('还没有讲解记录。阅读课程或 AI 回答时划词点「讲解」，每次都会记到这里', 'No explanations yet. Select text while reading and tap "Explain" — every one is logged here')}</small>`}
 ${es.length ? `<div class=footer><button class=danger onclick="clearExplains()">${L('清空讲解历史', 'Clear explanation history')}</button></div>` : ''}`
 }
@@ -861,7 +900,7 @@ ${(S.domains || []).map(d => { const ol = d.outline || []
 
 // ---------- 领域建模 ----------
 const domOf = id => S.domains?.find(x => x.id === id)
-// 知识卡的「面试常见建模题」段抽出来当题库（到下一个 ## 为止，避免混入通用陷阱）；英文界面下标题被翻成英文，两种写法都认
+// 知识卡的「面试常见建模题」段抽出来当题库（到下一个 ## 为止，避免混入通用陷阱）；英文写法兼容旧数据（AI 输出跟随界面语言时期生成的标题）
 const quizOf = facts => { const seg = String(facts).split(/面试常见建模题|[Mm]odeling [Qq]uestion/)[1]?.split('##')[0] || ''
   return seg.split('\n').map(x => x.trim()).filter(x => x.startsWith('- ')).map(x => x.slice(2)).join('\n') }
 
@@ -1062,7 +1101,7 @@ function startInterview(t) {
 
 function renderChat() {
   $('#chat').innerHTML = iv.messages.map((m, i) =>
-    `<div class="msg ${m.role === 'assistant' ? 'assistant md' : m.role}" ${m.role === 'assistant' ? `onclick="speak(iv.messages[${i}].content)"` : ''}>${m.role === 'assistant' ? md(m.content) : esc(m.content)}</div>`).join('')
+    `<div class="msg ${m.role === 'assistant' ? 'assistant md' : m.role}" ${m.role === 'assistant' ? `onclick="speak(iv.messages[${i}].content)"` : ''}>${m.role === 'assistant' ? md(m.content) + transHTML(m, `trIvMsg(this, ${i})`) : esc(m.content)}</div>`).join('')
   $('#answer').scrollIntoView({ block: 'end' })
 }
 
