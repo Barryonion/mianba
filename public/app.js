@@ -53,7 +53,7 @@ function termExplain(el) { explainTerm(el.textContent.trim()) }
 function explainTerm(term, src) {
   withBusy(async () => {
     const from = src || selInfo?.src || L('阅读中', 'Reading')
-    const explain = await chat(`你是资深架构师和面试辅导。用 2-4 句话通俗讲解给出的概念，候选人系统档案里有对应实践就对照着讲；最后单独一行「面试视角：」给一句最关键的要点。简洁，中文。`,
+    const explain = await chat(`你是资深架构师和面试辅导。用 2-4 句话通俗讲解给出的概念，候选人系统档案里有对应实践就对照着讲；最后单独一行「面试视角：」给一句最关键的要点，尽量带一个量级参照。简洁，中文。`,
       [{ role: 'user', content: `${L('概念', 'Concept')}: ${term}\n${L('来源', 'Source')}: ${from}${projectsBlock()}` }])
     // 每次讲解都入历史（同一个词重复讲也各记一条，靠时间区分）；sheet 直接展示这份记录，译文也挂在它上面
     S.explains ??= []
@@ -161,7 +161,12 @@ const loadJobs = () => api('/api/jobs').then(j => {
 // AI 一律中文回答：界面语言只管 UI 文案，不影响 AI 输出语言（英文界面 + 中文 AI 回答并存）。
 // 指令追加在 system 末尾、优先级最高（要压过 prompt 正文里写死的语言要求）
 const zhDirective = '\n\n（回答请全程使用中文。）'
-const chat = async (system, messages) => (await api('/api/chat', { system: system + zhDirective, messages })).content
+// 对话默认 reasoning_effort low（快、基本不思考）；生成类调用第三参覆盖：{ max_tokens, temperature, reasoning_effort: 'high' }，由服务端透传 LLM
+const chat = async (system, messages, opts = {}) => {
+  const r = await api('/api/chat', { system: system + zhDirective, messages, reasoning_effort: 'low', ...opts })
+  if (r.truncated) alert(L('内容达到长度上限被截断了，建议重试或让它分段继续', 'Output hit the length limit and was truncated — retry or ask it to continue'))
+  return r.content
+}
 async function askJSON(system, user) {
   const { content } = await api('/api/chat', { system: system + zhDirective, messages: [{ role: 'user', content: user }], json: true })
   try { return JSON.parse(content.replace(/```json|```/g, '').trim()) } catch { throw new Error(L('AI 返回格式不对，再试一次', 'AI returned an unexpected format, try again')) }
@@ -251,10 +256,10 @@ missed：追问清单里这场面试真正被问到、且候选人没答好或�
 ${t.gaps.filter(g => g.strength !== 'strong').map(g => `- ${g.requirement}`).join('\n')}`,
   study: `你是资深技术面试辅导老师。用户会给出简历、JD、JD 中的一条要求，以及面试官针对这条要求的追问。帮候选人准备这道追问。
 输出严格 JSON，格式为 {"concepts":[{"name":"概念名","explain":"解释"}],"approach":"回答思路"}：
-concepts：4-6 个回答这道追问必须讲清楚的相关领域概念，explain 用 2-3 句话说清是什么、面试常考什么；
-approach 是字符串，多条内容在字符串内用换行分隔，不要用数组：先给回答结构（先说什么后说什么），再指出简历里哪段真实经历可以拿来举例；简历里没有的不要编造，改为建议如何诚实回答并展示补齐思路。`,
-  tutor: (t, g) => `你是资深技术面试辅导老师，正在陪候选人准备下面这条岗位要求。中文回答，结构清楚、简洁，可以用列表和短代码。
-要在手机上读：少用表格、标题不超过两级、段落短。解释概念时讲清原理、面试常见追问和易错点；给回答思路或示例时，只用简历里的真实经历，不编造；候选人自己作答时，直接指出问题并给出改进版。
+concepts：4-6 个回答这道追问必须讲清楚的相关领域概念，explain 用 3-5 句话说清是什么、面试常考什么，并含一个常见误区；
+approach 是字符串，多条内容在字符串内用换行分隔，不要用数组：先给回答结构（先说什么后说什么），再指出简历里哪段真实经历可以拿来举例，最后给出深挖链：面试官顺着这个思路最可能的 2-3 层追问；简历里没有的不要编造，改为建议如何诚实回答并展示补齐思路。`,
+  tutor: (t, g) => `你是资深技术面试辅导老师，正在陪候选人准备下面这条岗位要求。中文回答，结构清楚、简洁，可以用列表和短代码，关键结论尽量带量级数字。
+要在手机上读：标题不超过两级、段落短。解释概念时讲清原理、面试常见追问和易错点；给回答思路或示例时，案例优先用简历里的真实经历，引用业界公开方案时点名来源，不得编造数字；候选人自己作答时，直接指出问题并给出改进版。
 
 ${P.material(t)}
 
@@ -270,28 +275,45 @@ ${g.requirement}
 - 2-3 节关键难题专题，标题形如「难题专题：幂等与去重」
 - 1 节横向对比与选型决策树
 标题不超过 20 字，不要编号（程序会加）`,
-  sectionGen: `你是资深架构师和面试辅导，为候选人写领域课程的其中一节，纯 markdown、2000-3000 字、由浅入深，按节的类型组织：
-- 实体深读：是什么、职责边界、生命周期与状态、与其他实体/模块的关系、设计陷阱
-- 方案深读：这家方案的架构拆解（分层讲清）、为什么这么设计（约束与取舍）、适用场景、优缺点、可借鉴点
-- 难题专题：问题本质、主流解法对比（各自的代价）、工程落地细节、常见错误
-- 全貌/对比节：对比用表格；对比节给按业务约束选型的决策树（文字版）
-候选人项目档案有相关实践时，标注「↩ 你项目的实践：<对照说明>」。
-正文中把 3-6 个最关键的概念用 [[概念名]] 标注（各只标第一次出现）。
-结尾固定两段：「## 理解检查」（2 道题，不要答案）、分隔线、「### 参考答案要点」（每题 3-5 行要点）。`,
-  domainGen: `你是资深架构师和面试辅导。为指定的业务领域写一张「领域建模知识卡」，纯 markdown、控制在 1200 字内，固定四段：
+  sectionGen: `你是资深架构师和面试辅导，为候选人写领域课程的其中一节。纯 markdown、2500-3500 字，信息密度优先：论断尽量带数字（量级）、真实系统名或配置/伪代码级细节；禁止"合理设计""综合考虑"这类空话。由浅入深，按节的类型组织：
+- 实体深读：是什么、职责边界、生命周期与状态、与其他实体/模块的关系、设计陷阱（每个陷阱配反例三行式：错误做法、后果、正确做法）
+- 方案深读：这家方案的架构分层拆解（每层职责与关键技术）、为什么这么设计（业务约束与取舍，说清"不这样设计会怎样"）、关键数字（量级）、适用与不适用场景、可借鉴点
+- 难题专题：问题本质、主流解法对比（表格：解法/代价/适用规模）、工程落地细节（至少一段伪代码或配置级示例）、常见错误与排查思路
+- 全貌/对比节：对比用表格；对比节给按业务约束选型的决策树（文字版，每个分支带判断条件）
+
+写作规则：
+- 每节至少 1 个带数字的业界案例（点名公司/系统，只用公开分享过的事实）和 1 个反例或坑
+- 候选人项目档案有相关实践时，用引用块标注「↩ 你项目的实践：<对照说明>」；档案里没有的不标
+- 节内小节用 ### 与 #### 标题，不要用 # 或 ##（页面会统一分节）
+- 正文中把 3-6 个最关键概念用 [[概念名]] 标注（各只标第一次出现）
+- 需要展开但不打断主线的细节（长案例、完整对比表、排查记录），放进以「\`\`\`case 标题」开头、「\`\`\`」结尾的折叠块里，每块 5-15 行
+
+结尾固定两段：「## 理解检查」（2 道题，题干带场景与量级，不要答案）、分隔线、「### 参考答案要点」（每题 3-5 行要点，含关键数字或判断条件）。`,
+  domainGen: `你是资深架构师和面试辅导，为候选人写「领域建模知识卡」。纯 markdown，整体 1800-2400 字，信息密度优先：每个论断尽量带量级数字、真实系统名或具体机制，禁止"合理设计""综合考虑"这类空话。固定六段，标题一字不差：
+
+## 一分钟全貌
+这个领域解决什么业务问题，钱/货/数据怎么流动，参与角色与上下游系统，3-5 行讲清主链路。
+
 ## 核心概念与实体关系
-主要实体、聚合/模块怎么划分、关键状态机或账务口径
-## 常见建模套路
-该领域通用的设计方案与取舍；候选人项目档案里有真实实践的必须标注「↩ 你项目的实践：<对应做法>」
-## 主流方案
-业界代表性做法作参照：大厂公开分享的方案（点名公司与要点）、成熟开源项目、主流云服务，各一行带适用场景；和上面套路的差异点一句带过
+主要实体与关键字段、聚合或模块划分、关键状态机或账务口径；至少给一个实体生命周期示例（状态 A 到 B 的触发条件与副作用）。
+
+## 建模套路与取舍
+该领域 2-3 种通用设计方案；每种写清：适用前提、代价、什么规模下会撑不住。候选人项目档案里有真实实践的必须标注「↩ 你项目的实践：<对应做法>」，档案里没有的不标。
+
+## 业界主流方案
+2-3 家，点名公司/开源项目/云产品。每家 3-5 行：架构要点、至少一个关键数字（TPS、数据量、延迟、成本任一，公开分享过的写具体值，记不清就写"量级：约 X"）、与上面套路的差异一句带过。只用公开事实，不编造数字。
+
+## 高频翻车点与反例
+4-6 条，每条三行式：翻车现象一行、根因一行、防法一行；覆盖该领域真实高频风险（幂等、并发、对账、越权等与本领域相关者）。
+
 ## 面试常见建模题
-5 道，每行以「- 」开头，一行一道
-## 通用陷阱
-幂等、并发、对账、越权等该领域高频翻车点
-只引用项目档案里真实存在的实践，档案里没有的不标。`,
+5 道，每行以「- 」开头，一行一道；每道题干必须带业务场景 + 至少一个量级或约束（例："日订单 500 万、T+1 对账，怎么设计对账系统？"），不要只写名词式题目。`,
   drill: d => `你是资深架构师面试官，考察候选人「${d.name}」领域的系统建模能力。中文。
-先出一道真实感的建模设计题（参考下面的知识卡，不要与对话里出过的重复），一句话场景即可；候选人给方案后，就并发、幂等、一致性、扩展性中最薄弱处追问 2-3 层；追问完再点评（好的地方、漏洞、更优方案）。每次只提一个问题，不要自己给答案。
+
+出题：参考下面的知识卡出题（不要与对话里出过的重复），题干必须是一段真实感的业务场景：业务背景 1-2 句 + 明确量级（用户量/日单量/数据量/延迟要求至少一项）+ 2-3 个约束条件 + 一句"你会怎么设计"。
+追问：候选人给方案后，挑其方案最薄弱处追问 2-3 层，维度从这些里选：容量估算是否算过、幂等与重复、一致性口径、失败与补偿、扩展性与单点、成本；追问要具体到数字或边界条件（如"对账延迟 1 小时会出现什么"），不要泛泛问"怎么保证一致性"。
+点评：追问完后点评——好的地方、漏洞、更优方案（业界谁这么做）。
+每次只提一个问题，不要自己给答案；候选人明显卡住时可给一次提示。
 
 <领域知识卡>
 ${d.facts || '（还没有知识卡内容）'}
@@ -309,30 +331,49 @@ const tally = t => ({ strong: t.gaps.filter(g => g.strength === 'strong').length
   none: t.gaps.filter(g => !['strong', 'weak'].includes(g.strength)).length, studied: t.gaps.filter(g => g.study).length })
 const pills = c => `<span class="pill bad">❌ ${c.none}</span><span class="pill warn">⚠️ ${c.weak}</span><span class="pill ok">✅ ${c.strong}</span>`
 const icon = g => ({ strong: '✅', weak: '⚠️' })[g.strength] || '❌'
-// 极简 Markdown：先 esc 整段，再在转义后的文本上识别标题、表格、代码块、引用、分隔线、粗体、行内代码，不会引入任意 HTML
+// 极简 Markdown：先 esc 整段，再在转义后的文本上白名单替换（标题分级、嵌套列表、表格、```case 折叠块、代码块、
+// 引用、分隔线、粗体、行内代码、http/https 链接、[[术语]]），不引入任意 HTML。renderLines 只吃已转义行，折叠块内容递归复用同一管线。
 const mdInline = s => esc(s).replace(/`([^`]+)`/g, '<code>$1</code>').replace(/\*\*(.+?)\*\*/g, '<b>$1</b>')
-function md(s) {
-  const out = [], lines = esc(s).split('\n')
-  const inline = l => l.replace(/`([^`]+)`/g, '<code>$1</code>').replace(/\*\*(.+?)\*\*/g, '<b>$1</b>')
-    .replace(/\[\[(.+?)\]\]/g, "<span class=term onclick='termExplain(this)'>$1</span>")
+const inline = l => l.replace(/`([^`]+)`/g, '<code>$1</code>').replace(/\*\*(.+?)\*\*/g, '<b>$1</b>')
+  .replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2" target=_blank rel=noopener>$1</a>') // 链接白名单：仅 http/https，新窗口打开
+  .replace(/\[\[(.+?)\]\]/g, "<span class=term onclick='termExplain(this)'>$1</span>")
+const ITEM = l => l.match(/^(\s*)([-*•])\s+(.*)$/) || l.match(/^(\s*)(\d+[.、])\s*(.*)$/) // 无序要空格；有序兼容无空格（旧行为）
+// 嵌套列表：行首缩进每 2 空格深一级；同缩进但标记类型切换（- 转 1.）就闭合另起，与旧渲染一致
+function listHTML(lines) {
+  const out = [], stack = [] // stack: { tag, indent, li }，li = 本层最后一条 <li> 是否还开着
+  for (const l of lines) {
+    const m = ITEM(l), indent = m[1].replace(/\t/g, '  ').length, tag = /\d/.test(m[2]) ? 'ol' : 'ul'
+    // 先收层：比本行浅的、以及同缩进但标记类型切换（- 转 1.）的层，逐层闭合
+    while (stack.length && (indent < stack[stack.length - 1].indent || (indent === stack[stack.length - 1].indent && tag !== stack[stack.length - 1].tag))) {
+      const s = stack.pop(); if (s.li) out.push('</li>'); out.push(`</${s.tag}>`)
+    }
+    // 收层后必须按剩余栈顶重算深浅（pop 前算会在嵌套层被收掉后误判成平级）：比栈顶深一级以上就在其 li 内开嵌套列表；否则闭合同级上一条、续条
+    const deeper = stack.length && indent > stack[stack.length - 1].indent + 1
+    if (!deeper && stack[stack.length - 1]?.li) out.push('</li>')
+    if (!stack.length || deeper) { out.push(`<${tag}>`); stack.push({ tag, indent, li: false }) }
+    out.push(`<li>${inline(m[3])}`); stack[stack.length - 1].li = true
+  }
+  while (stack.length) { const s = stack.pop(); if (s.li) out.push('</li>'); out.push(`</${s.tag}>`) }
+  return out.join('')
+}
+function renderLines(lines) {
+  const out = []
   const isRow = l => /^\s*\|/.test(l)
   for (let i = 0; i < lines.length; i++) {
     const l = lines[i]
     let m
     if (/^\s*```/.test(l)) {
+      const fm = l.match(/^\s*```(\w*)[ \t]*(.*)$/) // ```case 标题 → 折叠块；其余信息串忽略（旧行为）
       const code = []
       while (++i < lines.length && !/^\s*```/.test(lines[i])) code.push(lines[i])
-      out.push(`<pre class=code>${code.join('\n')}</pre>`)
-    } else if (/^\s*[-*•]\s+/.test(l)) {
+      out.push(fm && fm[1] === 'case'
+        ? `<details class=caseblk><summary>案例：${inline(fm[2])}</summary>${renderLines(code)}</details>`
+        : `<pre class=code>${code.join('\n')}</pre>`)
+    } else if (ITEM(l)) {
       const items = []
-      while (i < lines.length && /^\s*[-*•]\s+/.test(lines[i])) { items.push(lines[i].replace(/^\s*[-*•]\s+/, '')); i++ }
+      while (i < lines.length && ITEM(lines[i])) { items.push(lines[i]); i++ }
       i--
-      out.push(`<ul>${items.map(x => `<li>${inline(x)}</li>`).join('')}</ul>`)
-    } else if (/^\s*\d+[.、]\s*/.test(l)) {
-      const items = []
-      while (i < lines.length && /^\s*\d+[.、]\s*/.test(lines[i])) { items.push(lines[i].replace(/^\s*\d+[.、]\s*/, '')); i++ }
-      i--
-      out.push(`<ol>${items.map(x => `<li>${inline(x)}</li>`).join('')}</ol>`)
+      out.push(listHTML(items))
     } else if (isRow(l)) {
       const rows = []
       for (; i < lines.length && isRow(lines[i]); i++) {
@@ -340,13 +381,14 @@ function md(s) {
       }
       i--
       out.push(`<div class=tbl><table>${rows.map((r, k) => `<tr>${r.map(c => k ? `<td>${inline(c.trim())}</td>` : `<th>${inline(c.trim())}</th>`).join('')}</tr>`).join('')}</table></div>`)
-    } else if ((m = l.match(/^#{1,6}\s+(.*)/))) out.push(`<div class=mh>${inline(m[1])}</div>`)
+    } else if ((m = l.match(/^(#{1,6})\s+(.*)/))) out.push(`<div class="mh ${m[1].length <= 2 ? 'h2' : 'h3'}">${inline(m[2])}</div>`) // #/## 一级、### 及以下二级
     else if (/^\s*([-*_])\1{2,}\s*$/.test(l)) out.push('<hr>')
     else if ((m = l.match(/^&gt;\s?(.*)/))) out.push(`<blockquote>${inline(m[1])}</blockquote>`)
     else out.push(l.trim() ? `<div>${inline(l)}</div>` : '<div class=gap></div>')
   }
   return out.join('')
 }
+function md(s) { return renderLines(esc(s).split('\n')) }
 const gapOf = (tid, i) => target(tid)?.gaps[i]
 const reviewHTML = (r, saving) => [[L('🎯 能否通过', '🎯 Verdict'), r.verdict], [L('⚠️ 薄弱回答', '⚠️ Weak answers'), r.weak], [L('✨ 更好的答法', '✨ Better answers'), r.better],
   ...(txt(r.missed) ? [[L('🔁 这场没答好', '🔁 Missed this round'), `${txt(r.missed)}${saving ? '\n' + L('（保存后这些条目会标记「模拟没答好」）', '(will be marked "missed in mocks" after saving)') : '\n' + L('（这些条目已标记「模拟没答好」）', '(marked "missed in mocks")')}`]] : [])]
@@ -429,13 +471,24 @@ ${(d.chat || []).length ? assess(`dq:${d.id}:${qi ?? 0}`) : ''}
 </div>`
 }
 
+// 课程页小节锚点：扫描顶层标题（跳过 ``` 围栏内的），chips 点击滚动到对应 .mh；与渲染端「顶层 .mh」一一对应
+const headsOf = s => { const out = []; let fence = false
+  for (const l of String(s).split('\n')) {
+    if (/^\s*```/.test(l)) { fence = !fence; continue }
+    if (!fence) { const m = l.match(/^#{1,6}\s+(.*)/); if (m) out.push(m[1].replace(/\[\[(.+?)\]\]/g, '$1').replace(/\*\*/g, '')) }
+  }
+  return out }
+function jumpMh(k) { document.querySelectorAll('#seccard > .mh')[k]?.scrollIntoView({ block: 'start' }) }
+
 const sectionPage = (id, i) => {
   const d = domOf(id)
   const sec = d?.sections?.[i]
+  const heads = sec ? headsOf(sec.content).slice(0, 10) : []
   return `${back('#/d/' + id, d.name)}<h1>${i + 1}. ${esc(d.outline?.[i]?.t || '...')}</h1>
-${sec ? `<div class="card md">${md(sec.content)}</div>
+${sec ? `${heads.length > 1 ? `<div class=chips>${heads.map((h, k) => `<button class=chip onclick="jumpMh(${k})">${esc(h)}</button>`).join('')}</div>` : ''}
+<div class="card md" id=seccard>${md(sec.content)}</div>
 <div class=chips><button class="chip" onclick="drillSection('${id}', ${i})">${L('🎤 就这节考我', '🎤 Quiz me on this')}</button></div>
-${assess(`ds:${id}:${i}`)}` : `${loading(L('正在生成本节内容（约 1 分钟）…', 'Generating this section (about 1 min)…'))}
+${assess(`ds:${id}:${i}`)}` : `${loading(L('正在生成本节内容（约 1-3 分钟）…', 'Generating this section (about 1-3 min)…'))}
 <button onclick="genSection('${id}', ${i})">${L('重新生成', 'Regenerate')}</button>`}
 `
 }
@@ -838,7 +891,7 @@ ${assess(`n:${id}`)}
 
 const genNoteExplain = id => withBusy(async () => {
   const n = noteOf(id)
-  n.explain = await chat('你是资深架构师和面试辅导。用 2-4 句话通俗讲解给出的概念，最后单独一行「面试视角：」给一句要点。简洁，中文。',
+  n.explain = await chat('你是资深架构师和面试辅导。用 2-4 句话通俗讲解给出的概念，最后单独一行「面试视角：」给一句要点，尽量带一个量级参照。简洁，中文。',
     [{ role: 'user', content: `${L('概念', 'Concept')}: ${n.term}\n${L('来源', 'Source')}: ${n.src || ''}${projectsBlock()}` }])
   await save()
   route()
@@ -917,7 +970,8 @@ function detectDomains(tid) {
 // withBusy 不能嵌套（内层会被 busy 守卫静默吞掉），生成走不带守卫的 genDomainCardInner
 const genDomainCardInner = async (id) => {
   const d = domOf(id)
-  d.facts = await chat(P.domainGen, [{ role: 'user', content: `领域：${d.name}${projectsBlock()}` }])
+  d.facts = await chat(P.domainGen, [{ role: 'user', content: `领域：${d.name}${projectsBlock()}` }],
+    { max_tokens: 4096, temperature: 0.4, reasoning_effort: 'high' })
   d.quiz = quizOf(d.facts)
   await save()
 }
@@ -965,7 +1019,8 @@ const genOutline = id => withBusy(async () => {
 const genSection = (id, i) => withBusy(async () => {
   const d = domOf(id)
   const titles = d.outline.map((x, k) => `${k + 1}. ${x.t}`).join('\n')
-  const content = await chat(P.sectionGen, [{ role: 'user', content: `领域：${d.name}\n\n课程大纲（当前要写第 ${i + 1} 节）：\n${titles}\n\n要写的节：${d.outline[i].t}${projectsBlock()}` }])
+  const content = await chat(P.sectionGen, [{ role: 'user', content: `领域：${d.name}\n\n课程大纲（当前要写第 ${i + 1} 节）：\n${titles}\n\n要写的节：${d.outline[i].t}${projectsBlock()}` }],
+    { max_tokens: 8192, temperature: 0.4, reasoning_effort: 'high' })
   d.sections ??= {}
   d.sections[i] = { content, at: new Date().toISOString() }
   await save()

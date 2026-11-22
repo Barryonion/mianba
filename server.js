@@ -35,22 +35,31 @@ const readBody = req => new Promise((ok, fail) => {
   req.on('end', () => { try { ok(JSON.parse(s)) } catch (e) { fail(e) } })
 })
 
-async function chat({ system, messages, json }) {
+// 生成参数由前端按场景传：生成类 max_tokens 4096/8192 + temperature 0.4 + reasoning_effort high，对话类走默认（2048/0.7/low）。
+// 2026-11-22 服务器实测（coding 端点 + glm-5.3）：max_tokens 合法范围 [1,131072] 且被严格执行；思考 token 计入 max_tokens 预算；
+// reasoning_effort low/high 均被接受且生效（low 时思考≈0）。thinking:{type:'disabled'} 已删：GLM-5.3 系列不支持关思考，字段在标准端点会直接 400。
+async function chat({ system, messages, json, max_tokens, temperature, reasoning_effort }) {
   if (!KEY) throw new Error('服务端没配 LLM_KEY / LLM_KEY not configured on server')
+  const mt = Number(max_tokens), tp = Number(temperature)
+  const effort = ['low', 'medium', 'high', 'max'].includes(reasoning_effort) ? reasoning_effort : ''
   const r = await fetch(LLM_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${KEY}` },
     body: JSON.stringify({
       model: LLM_MODEL,
       messages: [{ role: 'system', content: system }, ...messages],
-      temperature: 0.7,
-      thinking: { type: 'disabled' }, // 智谱扩展参数：关掉思考，面试对话要快
+      max_tokens: Number.isFinite(mt) && mt >= 1 ? Math.min(Math.round(mt), 16384) : 2048, // 端点上限 131072，应用侧 16K 封顶防误传
+      temperature: Number.isFinite(tp) ? Math.min(Math.max(tp, 0), 2) : 0.7,
+      ...(effort && { reasoning_effort: effort }),
       ...(json && { response_format: { type: 'json_object' } }),
     }),
-    signal: AbortSignal.timeout(120_000),
+    // 长 max_tokens 的生成（思考模型 + 8K 输出）远超原 120s，随 token 量放宽、封顶 10 分钟（实测 8192 token 约 80s）
+    signal: AbortSignal.timeout(Math.min(600_000, Math.max(120_000, 60_000 + (Number.isFinite(mt) ? mt : 2048) * 60))),
   })
   if (!r.ok) throw new Error(`LLM ${r.status}: ${await r.text()}`)
-  return (await r.json()).choices[0].message.content
+  const c = (await r.json()).choices[0]
+  // finish_reason=length = 被 max_tokens 截断：带 truncated 让前端提示重试/分段，不再静默存半截
+  return { content: c.message.content, ...(c.finish_reason === 'length' && { truncated: true }) }
 }
 
 // 岗位雷达：只读巡检程序写的 SQLite（JOBS_DB 指向它），没配就不提供
@@ -85,7 +94,7 @@ http.createServer(async (req, res) => {
       return jobs ? send(req, res, 200, jobs) : send(req, res, 404, { error: '没配 JOBS_DB / JOBS_DB not configured' })
     }
     if (req.url === '/api/chat' && req.method === 'POST') {
-      return send(req, res, 200, { content: await chat(await readBody(req)) })
+      return send(req, res, 200, await chat(await readBody(req)))
     }
     // xl 课程库镜像：文件名含中文和空格，浏览器会百分号编码，要 decode 后再映射文件
     const pathname = req.url.split('?')[0]
