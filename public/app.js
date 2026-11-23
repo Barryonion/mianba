@@ -143,7 +143,7 @@ async function api(url, body, method = body ? 'POST' : 'GET') {
   return j
 }
 // localStorage 缓存（手机走中继链路慢，缓存让第二次打开秒出页面；v 变了就作废重来）
-const CACHE_V = 3
+const CACHE_V = 4 // 4：jobs 改瘦列表（无 jd/score_reason 正文），旧的全量缓存作废
 const cache = {
   get k() { return 'mianba.v' + CACHE_V },
   read() { try { return JSON.parse(localStorage.getItem(this.k) || 'null') } catch { return null } },
@@ -154,8 +154,13 @@ const load = async () => {
   cache.write({ state: S, jobs: J && J !== false ? J : cache.read()?.d?.jobs })
 }
 const save = () => api('/api/state', S, 'PUT').then(() => { cache.write({ state: S, jobs: J && J !== false ? J : cache.read()?.d?.jobs }) })
+// 切回前台重复拉 jobs 的新鲜期（分钟）：距上次成功拉取不足这个数不再拉，省掉手机端每次回前台整份重下。
+// 想调整频率只改这一个数；整页手动刷新不受此限制（启动路径总是拉）。
+const JOBS_FRESH_MIN = 10
+let jobsAt = 0 // 上次成功拉取 /api/jobs 的时间戳
 const loadJobs = () => api('/api/jobs').then(j => {
   J = j
+  jobsAt = Date.now()
   cache.write({ state: S, jobs: j })
 }, () => { J = false })
 // AI 一律中文回答：界面语言只管 UI 文案，不影响 AI 输出语言（英文界面 + 中文 AI 回答并存）。
@@ -549,16 +554,37 @@ const resumePage = () => `${back('#/')}<h1>${L('我的简历', 'My resume')}</h1
 <textarea id=resume rows=20 placeholder="${esc(L('粘贴简历文字，或导入 PDF', 'Paste resume text, or import a PDF'))}">${esc(S.resume)}</textarea>
 <button class=primary onclick="saveResume()">${L('保存', 'Save')}</button>`
 
-const jdDraft = j => `${join([j.job_name, j.salary_desc, join([j.area, j.business_area], ''), j.experience, j.degree], L('｜', ' | '))}
+const jdFallback = () => L('（职位描述还没抓到：打开 BOSS 岗位详情，把完整职位描述粘贴到这里替换这一行，分析会准得多）', '(No JD captured yet: open the job on BOSS and paste the full description here to replace this line — the analysis will be far more accurate)')
+// 第三参 body 用于按需加载期间往同一骨架里填「正在加载/加载失败」占位，不传就取 jd 或缺省提示
+const jdDraft = (j, body) => `${join([j.job_name, j.salary_desc, join([j.area, j.business_area], ''), j.experience, j.degree], L('｜', ' | '))}
 ${L('技能标签：', 'Skills: ')}${j.skills || L('无', 'None')}
 
-${j.jd || L('（职位描述还没抓到：打开 BOSS 岗位详情，把完整职位描述粘贴到这里替换这一行，分析会准得多）', '(No JD captured yet: open the job on BOSS and paste the full description here to replace this line — the analysis will be far more accurate)')}`
+${body ?? (j.jd || jdFallback())}`
 
 const newPage = j => `${back(j ? '#/jobs' : '#/')}<h1>${L('新建目标岗位', 'New target role')}</h1>
 <input id=company placeholder="${esc(L('公司', 'Company'))}" value="${esc(j?.brand_name)}"><input id=role placeholder="${esc(L('岗位', 'Role'))}" value="${esc(j?.job_name)}">
 ${j && !j.jd ? `<a class=btn href="${esc(safeUrl(j.url))}" target=_blank rel=noopener>${L('去 BOSS 复制完整 JD ›', 'Open BOSS to copy the full JD ›')}</a>` : ''}
 <textarea id=jd rows=14 placeholder="${esc(L('整段粘贴 JD', 'Paste the full JD'))}">${j ? esc(jdDraft(j)) : ''}</textarea>
+${j && j.jd == null && j.has_jd ? `<div class=chips><button class=chip onclick="fillJD(${esc(JSON.stringify(j.id))})">${L('重新加载职位描述', 'Reload the JD')}</button></div>` : ''}
 <button class=primary onclick="analyze()">${L('分析差距', 'Analyze gaps')}</button>`
+
+// 建目标页 JD 预填：瘦列表没有 jd 正文，进页自动按需拉单条详情填进 JD 框（含加载与失败提示）。
+// 拉到后并入 J 与本地缓存；期间用户动过输入框就不覆盖。
+async function fillJD(id) {
+  const j = J?.find?.(x => x.id === id)
+  const ta = $('#jd')
+  if (!j || !ta || j.jd != null || !j.has_jd) return // 不在建目标页 / 已有正文 / 这岗位本来就没抓到过
+  const mark = jdDraft(j, L('正在加载职位描述…', 'Loading the job description…'))
+  ta.value = mark
+  try {
+    Object.assign(j, await api('/api/jobs?id=' + encodeURIComponent(id)))
+    cache.write({ state: S, jobs: J })
+    if (ta.isConnected && ta.value === mark) ta.value = jdDraft(j)
+  } catch (e) {
+    if (ta.isConnected && ta.value === mark)
+      ta.value = jdDraft(j, L('职位描述加载失败：', 'Failed to load the JD: ') + e.message + '\n' + jdFallback())
+  }
+}
 
 const jobsPage = () => `${back('#/')}<h1>${L('岗位雷达', 'Job radar')} <button class=link onclick="location.hash='#/market'">${L('行情 ›', 'Market ›')}</button></h1>
 ${J === null ? loading() : J === false ? `<small>${L('服务器没接巡检数据（JOBS_DB）', 'Server has no job data (JOBS_DB not configured)')}</small>` : `
@@ -576,12 +602,35 @@ const jobCard = j => {
 <small>${esc(join([join([j.area, j.business_area], ''), j.experience, j.degree, j.boss_name && join([j.boss_name, j.boss_title], ' ')]))}</small>
 ${j.skills ? `<div class=tags>${j.skills.split(',').slice(0, 10).map(s => `<span>${esc(s)}</span>`).join('')}</div>` : ''}
 ${j.score_reason ? `<small class=why>${j.score}${L(' 分：', ' pts: ')}${esc(j.score_reason)}</small>` : ''}
-${j.jd ? `<details><summary>${L('职位描述', 'JD')}</summary><pre>${esc(j.jd)}</pre></details>` : ''}
+${jdFold(j)}
 <small>${L('首次发现', 'First seen')} ${when(j.first_seen)} · ${L(`出现 ${j.seen_count} 次`, `seen ${j.seen_count}×`)}${j.pushed ? ' · ' + L('已推送', 'pushed') : ''}${j.matched ? '' : ' · ' + L('不符合条件', 'not qualified')}${mk ? ` · ${MARKS()[mk.s]} ${new Date(mk.at).toLocaleDateString()}` : ''}</small>
 <a class=btn href="${esc(safeUrl(j.url))}" target=_blank rel=noopener>${L('去 BOSS 看', 'Open in BOSS')}</a>
 ${t ? `<a class=btn href="#/t/${t.id}">${L('已建目标 ›', 'Target role ›')}</a>` : `<a class="btn primary" href="#/new/${encodeURIComponent(j.id)}">${L('建为目标岗位', 'Create target role')}</a>`}
 <div class=chips>${Object.entries(MARKS()).map(([s, name]) => `<button class="chip ${mk?.s === s ? 'on' : ''}" onclick="markJob(${esc(JSON.stringify(j.id))}, '${s}')">${name}</button>`).join('')}</div>
 </div>`
+}
+
+// JD 折叠：有正文直接渲染；瘦列表还没拉的（has_jd 标记有货）首次展开时按需取详情；没抓到过的不出折叠
+const jdFold = j => j.jd != null
+  ? `<details><summary>${L('职位描述', 'JD')}</summary>${j.jd ? `<pre>${esc(j.jd)}</pre>` : `<small>${L('（这个岗位的职位描述还没抓到）', '(No JD captured for this job yet)')}</small>`}</details>`
+  : j.has_jd ? `<details ontoggle="jdToggle(this, ${esc(JSON.stringify(j.id))})"><summary>${L('职位描述', 'JD')}</summary><div class=jdbody></div></details>` : ''
+function jdToggle(d, id) { if (d.open) loadJobDetail(d, id) }
+async function loadJobDetail(d, id) {
+  const j = J?.find?.(x => x.id === id)
+  if (!j || j.jd != null) return
+  const body = d.querySelector('.jdbody')
+  body.innerHTML = loading(L('正在加载职位描述…', 'Loading the job description…'))
+  try {
+    Object.assign(j, await api('/api/jobs?id=' + encodeURIComponent(id))) // 并入列表项与缓存：score_reason 顺带补齐，下次不再拉
+    cache.write({ state: S, jobs: J })
+    const card = document.getElementById('job-' + j.id)
+    if (card) { // 整卡重画补上「匹配理由」一行，再把折叠重新展开
+      card.outerHTML = jobCard(j)
+      document.getElementById('job-' + j.id)?.querySelector('details')?.setAttribute('open', '')
+    } else renderJobs()
+  } catch (e) {
+    body.innerHTML = `<small class=why>${esc(L('详情加载失败：', 'Failed to load: ') + e.message)}</small><button class=chip onclick="jdToggle(this.closest('details'), ${esc(JSON.stringify(id))})">${L('重试', 'Retry')}</button>`
+  }
 }
 
 // 只重画列表，搜索框不丢焦点；传入按钮时顺便重画按钮状态
@@ -701,6 +750,7 @@ function route() {
   if (page === 'i' && t) startInterview(t)
   if (page === 'g' && t?.gaps[+sub] && !t.gaps[+sub].study) genStudy()
   if (page === 'jobs') renderJobs()
+  if (page === 'new' && id) fillJD(decodeURIComponent(id)) // 建目标 JD 预填按需拉详情（不在建目标页时函数自己会退出）
   // 底部 tab：按路由高亮；模拟面试页全屏沉浸
   // 课程页首次进入自动生成大纲（页面里有手动按钮兜底）
   if (page === 'd' && id && domOf(id) && !domOf(id).outline && !busy) genOutline(id)
@@ -1244,7 +1294,10 @@ const onHome = () => !location.hash || location.hash === '#/'
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState !== 'visible' || busy) return
   load().then(() => { if (onHome()) route() })
-  loadJobs().then(() => { if (onHome()) route(); else renderJobs() })
+  // jobs 体积大且只读：新鲜期内（JOBS_FRESH_MIN，默认 10 分钟）不重复拉；state 小且怕覆盖，每次都拉。
+  // 手动整页刷新不走这里（启动路径总是拉），不受限制。
+  if (Date.now() - jobsAt > JOBS_FRESH_MIN * 60e3)
+    loadJobs().then(() => { if (onHome()) route(); else renderJobs() })
 })
 // 先用缓存秒开，再拉最新覆盖（正填着表单就不动页面，切回来再刷新）
 {

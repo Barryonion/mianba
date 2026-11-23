@@ -65,39 +65,56 @@ async function chat({ system, messages, json, max_tokens, temperature, reasoning
 // 岗位雷达：只读巡检程序写的 SQLite（JOBS_DB 指向它），没配就不提供
 const JOBS_DB = process.env.JOBS_DB
 let jobsDb
-function listJobs() {
+function jobsConn() {
   if (!JOBS_DB || !fs.existsSync(JOBS_DB)) return null
   if (!jobsDb) {
     const { DatabaseSync } = require('node:sqlite') // Node 22.11 要加 --experimental-sqlite
     jobsDb = new DatabaseSync(JOBS_DB)
     jobsDb.exec('PRAGMA query_only = ON') // 这个版本不认 readOnly 选项，在连接上禁止写入
   }
-  return jobsDb.prepare(`SELECT id, job_name, salary_desc, salary_max_k, brand_name, brand_scale, brand_stage, brand_industry,
+  return jobsDb
+}
+// 列表瘦身：只给前端列表/行情渲染用的短字段；jd、score_reason 长文本剔除（手机端每次切前台下整份列表的主犯），
+// 有没有 jd 用一位 has_jd 带给前端决定要不要显示「按需拉详情」的折叠入口
+const JOBS_LIST = `id, job_name, salary_desc, salary_max_k, brand_name, brand_scale, brand_stage, brand_industry,
+  area, business_area, experience, degree, skills, boss_name, boss_title, url, matched, pushed,
+  first_seen, seen_count, score, (jd IS NOT NULL AND jd != '') AS has_jd`
+function listJobs() {
+  const db = jobsConn()
+  return db ? db.prepare(`SELECT ${JOBS_LIST} FROM jobs ORDER BY first_seen DESC`).all() : null
+}
+// 详情通道：/api/jobs?id= 按需取单条全字段（含 jd、score_reason 等），供展开 JD/建目标预填用
+function getJob(id) {
+  const db = jobsConn()
+  return db ? db.prepare(`SELECT id, job_name, salary_desc, salary_max_k, brand_name, brand_scale, brand_stage, brand_industry,
     area, business_area, experience, degree, skills, welfare, boss_name, boss_title, url, query, matched, pushed,
-    first_seen, last_seen, seen_count, jd, score, score_reason FROM jobs ORDER BY first_seen DESC`).all()
+    first_seen, last_seen, seen_count, jd, score, score_reason FROM jobs WHERE id = ?`).get(id) : null
 }
 
 http.createServer(async (req, res) => {
   try {
-    if (req.url === '/api/state' && req.method === 'GET') {
+    const pathname = req.url.split('?')[0]
+    const params = new URLSearchParams(req.url.split('?')[1] || '')
+    if (pathname === '/api/state' && req.method === 'GET') {
       return send(req, res, 200, fs.existsSync(STATE) ? fs.readFileSync(STATE) : '{"resume":"","targets":[]}')
     }
-    if (req.url === '/api/state' && req.method === 'PUT') {
+    if (pathname === '/api/state' && req.method === 'PUT') {
       // ponytail: 整份覆盖、后写赢；一个人用够了，多端同时编辑才需要合并
       const state = await readBody(req)
       fs.writeFileSync(STATE + '.tmp', JSON.stringify(state))
       fs.renameSync(STATE + '.tmp', STATE)
       return send(req, res, 200, { ok: true })
     }
-    if (req.url === '/api/jobs' && req.method === 'GET') {
-      const jobs = listJobs()
-      return jobs ? send(req, res, 200, jobs) : send(req, res, 404, { error: '没配 JOBS_DB / JOBS_DB not configured' })
+    if (pathname === '/api/jobs' && req.method === 'GET') {
+      // ?id=<id> 单条全字段（详情通道）；不带参数返回瘦身列表
+      const one = params.get('id') ? getJob(params.get('id')) : listJobs()
+      if (one === null) return send(req, res, 404, { error: '没配 JOBS_DB / JOBS_DB not configured' })
+      return one ? send(req, res, 200, one) : send(req, res, 404, { error: '没有这个岗位 / job not found' })
     }
-    if (req.url === '/api/chat' && req.method === 'POST') {
+    if (pathname === '/api/chat' && req.method === 'POST') {
       return send(req, res, 200, await chat(await readBody(req)))
     }
     // xl 课程库镜像：文件名含中文和空格，浏览器会百分号编码，要 decode 后再映射文件
-    const pathname = req.url.split('?')[0]
     if (pathname === '/xuexi' || pathname.startsWith('/xuexi/')) {
       let rel = 'index.html'
       try { rel = decodeURIComponent(pathname.replace(/^\/xuexi\/?/, '')) || 'index.html' } catch (e) {}
