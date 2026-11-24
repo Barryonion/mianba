@@ -41,7 +41,16 @@ async function bark(title, body, url, level = "active") {
     }
     for (const { t, e, when } of hit)
       await bark(`${when}${e.s === "test" ? "笔试" : "面试"}：${t.company}`, `${t.role}，记得复习薄弱项`, `${MIANBA_URL}/#/t/${t.id}`, "timeSensitive");
-    console.log(`remind: ${hit.length} 条`);
+    // 跟进：最后一条进度是已投递且整 5 天没动静的（第 5/10/15…天各提醒一次，从 at 推算免存状态）；最多 3 条、最久优先
+    const stale = (S.targets || [])
+      .map((t) => ({ t, last: (t.stages || []).at(-1) }))
+      .filter(({ last }) => last?.s === "applied")
+      .map(({ t, last }) => ({ t, n: Math.round((new Date(day(0)) - new Date(String(last.at).slice(0, 10))) / 86400e3) }))
+      .filter(({ n }) => n >= 5 && n % 5 === 0)
+      .sort((a, b) => b.n - a.n);
+    for (const { t, n } of stale.slice(0, 3))
+      await bark(`跟进：${t.company}`, `${t.role}，投递 ${n} 天无进展，跟进？`, `${MIANBA_URL}/#/t/${t.id}`);
+    console.log(`remind: 面试 ${hit.length} 条，跟进 ${Math.min(stale.length, 3)} 条`);
     return;
   }
 

@@ -401,6 +401,8 @@ const reviewHTML = (r, saving) => [[L('🎯 能否通过', '🎯 Verdict'), r.ve
 
 // 巡检时间是北京时间字符串 "2026-11-02 10:31:41"
 const today = () => new Date().toLocaleString('sv-SE', { timeZone: 'Asia/Shanghai' }).slice(0, 10)
+// 自动写入的进度时间戳用北京时间（daily.js 按北京时间日期算跟进天数）；手动 addStage 沿用既有 UTC 写法不动
+const bjNow = () => new Date().toLocaleString('sv-SE', { timeZone: 'Asia/Shanghai' }).replace(' ', 'T')
 const when = s => s ? (s.startsWith(today()) ? L('今天 ', 'Today ') : s.slice(5, 11)) + s.slice(11, 16) : ''
 const safeUrl = u => /^https:\/\//.test(u || '') ? u : '#'
 const join = (a, sep = ' · ') => a.filter(Boolean).join(sep)
@@ -658,7 +660,7 @@ const targetPage = t => {
 <div class=meta>${pills(c)}<span>${L(`已准备 ${c.studied}/${t.gaps.length}`, `Prepared ${c.studied}/${t.gaps.length}`)}</span></div>
 <a class="btn primary wide" href="#/i/${t.id}">${L('🎤 开始模拟面试', '🎤 Start mock interview')}</a>
 <h2>${L('投递进度', 'Application status')} ${stageNow(t) ? `<small>${L('当前', 'Now')}: ${stageNow(t)}</small>` : ''}</h2>
-${t.stages?.length ? t.stages.slice().reverse().map(e => `<div class=card><b>${STAGES()[e.s] || esc(e.s)}</b> <small style="display:inline">${new Date(e.at).toLocaleDateString()}</small>${e.note ? `<div>${esc(e.note)}</div>` : ''}</div>`).join('') : `<small>${L('还没记录。先选日期（可选，默认今天）、填备注（可选），再点下面的阶段按钮', 'No entries yet. Pick a date (optional, defaults to today), add a note (optional), then tap a stage button below')}</small>`}
+${t.stages?.length ? t.stages.map((e, i) => `<div class=card><b>${STAGES()[e.s] || esc(e.s)}</b> <small style="display:inline">${new Date(e.at).toLocaleDateString()}</small><button class="link danger" onclick="delStage('${t.id}', ${i})">${L('删除', 'Delete')}</button>${e.note ? `<div>${esc(e.note)}</div>` : ''}</div>`).reverse().join('') : `<small>${L('还没记录。先选日期（可选，默认今天）、填备注（可选），再点下面的阶段按钮', 'No entries yet. Pick a date (optional, defaults to today), add a note (optional), then tap a stage button below')}</small>`}
 <input type=date id=stgdate onchange="$('#stgnote')?.focus()">
 <input id=stgnote placeholder="${esc(L('备注，可选（如 HR 微信、面试官风格）', 'Note, optional (e.g. HR WeChat, interviewer style)'))}">
 <div class=chips>${Object.entries(STAGES()).map(([s, n]) => `<button class="chip ${t.stages?.at(-1)?.s === s ? 'on' : ''}" onclick="addStage('${t.id}', '${s}')">${n}</button>`).join('')}</div>
@@ -798,6 +800,9 @@ function analyze() {
   withBusy(async () => {
     const t = { id: crypto.randomUUID(), company, role, jd, gaps: [], tailored: '', intel: '', sessions: [],
       ...(page === 'new' && jobId && { jobId: decodeURIComponent(jobId) }) }
+    // 建目标即投递事实：stages 直接落 applied 首条；带来源岗位的连带把雷达标记置 applied（star/skip 覆盖）
+    t.stages = [{ s: 'applied', at: bjNow() }]
+    if (t.jobId) { S.jobMarks ??= {}; S.jobMarks[t.jobId] = { s: 'applied', at: new Date().toISOString() } }
     const r = await askJSON(P.gaps, P.material(t))
     t.gaps = r.gaps
     t.domains = String(txt(r.domains) || '').split('\n').map(x => x.trim().replace(/^[-•\d.、]+\s*/, '')).filter(Boolean).slice(0, 6)
@@ -847,6 +852,14 @@ const addStage = (tid, s) => withBusy(async () => {
   await save()
   route()
 })
+
+// 删一条投递进度：自动记的数据也要有纠错口；删空后 stageNow、列表 pill、阶段按钮高亮都按空数据自然回落
+function delStage(tid, i) {
+  const t = target(tid)
+  if (!t?.stages?.[i]) return
+  if (!confirm(L('删除这条进度记录？', 'Delete this status entry?'))) return
+  withBusy(async () => { t.stages.splice(i, 1); await save(); route() })
+}
 
 // ---------- 练习引擎：掌握度 + 间隔重复 ----------
 // 条目 key：g:<岗位id>:<序号>（差距追问）｜dq:<领域id>:<题号>（建模题）
@@ -1108,8 +1121,12 @@ function clearDrill(id) {
 // 再点一次同一个标记就取消；标完只重画列表，当前位置不跳
 async function markJob(id, s) {
   S.jobMarks ??= {}
-  if (S.jobMarks[id]?.s === s) delete S.jobMarks[id]
-  else S.jobMarks[id] = { s, at: new Date().toISOString() }
+  const on = S.jobMarks[id]?.s !== s
+  if (on) S.jobMarks[id] = { s, at: new Date().toISOString() }
+  else delete S.jobMarks[id]
+  // 标 applied 同样是投递事实：反向同步到关联目标，仅当它还没有任何进度（stages 只追加不覆盖；取消标记不回滚）
+  const t = on && s === 'applied' ? jobTarget({ id }) : null
+  if (t && !t.stages?.length) t.stages = [{ s: 'applied', at: bjNow() }]
   const y = scrollY
   route()
   scrollTo(0, y)
