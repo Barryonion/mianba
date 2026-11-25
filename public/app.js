@@ -802,11 +802,11 @@ function analyze() {
       ...(page === 'new' && jobId && { jobId: decodeURIComponent(jobId) }) }
     // 建目标即投递事实：stages 直接落 applied 首条；带来源岗位的连带把雷达标记置 applied（star/skip 覆盖）
     t.stages = [{ s: 'applied', at: bjNow() }]
-    if (t.jobId) { S.jobMarks ??= {}; S.jobMarks[t.jobId] = { s: 'applied', at: new Date().toISOString() } }
     const r = await askJSON(P.gaps, P.material(t))
     t.gaps = r.gaps
     t.domains = String(txt(r.domains) || '').split('\n').map(x => x.trim().replace(/^[-•\d.、]+\s*/, '')).filter(Boolean).slice(0, 6)
     S.targets.push(t)
+    if (t.jobId) { S.jobMarks ??= {}; S.jobMarks[t.jobId] = { s: 'applied', at: new Date().toISOString() } }
     await save()
     location.hash = '#/t/' + t.id
   })
