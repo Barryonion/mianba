@@ -57,7 +57,10 @@ async function chat({ system, messages, json, max_tokens, temperature, reasoning
     signal: AbortSignal.timeout(Math.min(600_000, Math.max(120_000, 60_000 + (Number.isFinite(mt) ? mt : 2048) * 60))),
   })
   if (!r.ok) throw new Error(`LLM ${r.status}: ${await r.text()}`)
-  const c = (await r.json()).choices[0]
+  const j = await r.json(), c = j.choices[0], u = j.usage || {}
+  // chat 元数据日志（2026-11-28-01 教训：AI 静默坏 6 天就是零日志的锅）：finish_reason/usage/truncated，
+  // 截断（length）当天就能从日志看见。只记元数据，正文/prompt/key 一律不落（红线）。
+  console.log(`chat finish_reason=${c.finish_reason ?? '?'} prompt_tokens=${u.prompt_tokens ?? '?'} completion_tokens=${u.completion_tokens ?? '?'} reasoning_tokens=${u.reasoning_tokens ?? u.completion_tokens_details?.reasoning_tokens ?? '?'} truncated=${c.finish_reason === 'length'}`)
   // finish_reason=length = 被 max_tokens 截断：带 truncated 让前端提示重试/分段，不再静默存半截
   return { content: c.message.content, ...(c.finish_reason === 'length' && { truncated: true }) }
 }
@@ -92,6 +95,7 @@ function getJob(id) {
 }
 
 http.createServer(async (req, res) => {
+  const t0 = Date.now()
   try {
     const pathname = req.url.split('?')[0]
     const params = new URLSearchParams(req.url.split('?')[1] || '')
@@ -128,5 +132,10 @@ http.createServer(async (req, res) => {
     send(req, res, 200, fs.readFileSync(target), TYPES[path.extname(target)] || 'application/octet-stream')
   } catch (e) {
     send(req, res, 500, { error: e.message })
+  } finally {
+    // 请求日志：/api/* 每请求一行元数据（method/path/status/耗时），静态资源与 /xuexi 不记；
+    // query 不落（防把用户数据带进日志），404/500 异常路径同样有行——status 就是为此。journald 自管轮转。
+    if (req.url.startsWith('/api/'))
+      console.log(`api ${req.method} ${req.url.split('?')[0]} ${res.statusCode} ${Date.now() - t0}ms`)
   }
 }).listen(PORT, '127.0.0.1', () => console.log(`mianba on http://127.0.0.1:${PORT}`))
