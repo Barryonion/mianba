@@ -35,7 +35,7 @@ const readBody = req => new Promise((ok, fail) => {
   req.on('end', () => { try { ok(JSON.parse(s)) } catch (e) { fail(e) } })
 })
 
-// 生成参数由前端按场景传：生成类 max_tokens 4096/8192 + temperature 0.4 + reasoning_effort high，对话类走默认（2048/0.7/low）。
+// 生成参数由前端按场景传：生成类 max_tokens 24576（2026-11-28-03） + temperature 0.4 + reasoning_effort high，对话类走默认（2048/0.7/low）。
 // 2026-11-22 服务器实测（coding 端点 + glm-5.3）：max_tokens 合法范围 [1,131072] 且被严格执行；思考 token 计入 max_tokens 预算；
 // reasoning_effort low/high 均被接受且生效（low 时思考≈0）。thinking:{type:'disabled'} 已删：GLM-5.3 系列不支持关思考，字段在标准端点会直接 400。
 async function chat({ system, messages, json, max_tokens, temperature, reasoning_effort }) {
@@ -48,7 +48,7 @@ async function chat({ system, messages, json, max_tokens, temperature, reasoning
     body: JSON.stringify({
       model: LLM_MODEL,
       messages: [{ role: 'system', content: system }, ...messages],
-      max_tokens: Number.isFinite(mt) && mt >= 1 ? Math.min(Math.round(mt), 16384) : 2048, // 端点上限 131072，应用侧 16K 封顶防误传
+      max_tokens: Number.isFinite(mt) && mt >= 1 ? Math.min(Math.round(mt), 24576) : 2048, // 端点上限 131072，应用侧 24K 封顶防误传（2026-11-28-03：high 思考计入预算，课程节实测思考 ~11.7K，16K 装不下）
       temperature: Number.isFinite(tp) ? Math.min(Math.max(tp, 0), 2) : 0.7,
       ...(effort && { reasoning_effort: effort }),
       ...(json && { response_format: { type: 'json_object' } }),

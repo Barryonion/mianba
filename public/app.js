@@ -1034,7 +1034,7 @@ function detectDomains(tid) {
 const genDomainCardInner = async (id) => {
   const d = domOf(id)
   d.facts = await chat(P.domainGen, [{ role: 'user', content: `领域：${d.name}${projectsBlock()}` }],
-    { max_tokens: 4096, temperature: 0.4, reasoning_effort: 'high' })
+    { max_tokens: 24576, temperature: 0.4, reasoning_effort: 'high' })
   d.quiz = quizOf(d.facts)
   await save()
 }
@@ -1083,7 +1083,7 @@ const genSection = (id, i) => withBusy(async () => {
   const d = domOf(id)
   const titles = d.outline.map((x, k) => `${k + 1}. ${x.t}`).join('\n')
   const content = await chat(P.sectionGen, [{ role: 'user', content: `领域：${d.name}\n\n课程大纲（当前要写第 ${i + 1} 节）：\n${titles}\n\n要写的节：${d.outline[i].t}${projectsBlock()}` }],
-    { max_tokens: 8192, temperature: 0.4, reasoning_effort: 'high' })
+    { max_tokens: 24576, temperature: 0.4, reasoning_effort: 'high' })
   d.sections ??= {}
   d.sections[i] = { content, at: new Date().toISOString() }
   await save()
