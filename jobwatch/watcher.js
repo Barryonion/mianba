@@ -144,7 +144,9 @@ async function scoreJobs() {
     try {
       const r = await fetch(`${MIANBA}/api/chat`, {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ system: sys, messages: [{ role: "user", content: user }], json: true }),
+        // 2026-11-28：不传 effort 时 glm-5.3 默认档思考烧光 max_tokens（2048，思考计入预算）→ 正文只剩 `{"`，
+        // 下方 JSON.parse 必败（journald 11-24/25 七次 Unterminated string）。low 同面霸 askJSON 修法，实测 0 思考、完整 JSON
+        body: JSON.stringify({ system: sys, messages: [{ role: "user", content: user }], json: true, reasoning_effort: "low" }),
         signal: AbortSignal.timeout(120000),
       });
       const c = JSON.parse((await r.json()).content.replace(/```json|```/g, "").trim());

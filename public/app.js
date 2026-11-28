@@ -172,9 +172,14 @@ const chat = async (system, messages, opts = {}) => {
   if (r.truncated) alert(L('内容达到长度上限被截断了，建议重试或让它分段继续', 'Output hit the length limit and was truncated — retry or ask it to continue'))
   return r.content
 }
+// 2026-11-28 排查结论：glm-5.3 不带 reasoning_effort 时默认档思考会烧光 max_tokens 预算
+// （2048 默认档实测 reasoning_tokens=2046/2048，正文只剩 `{"` → 解析必败）。
+// askJSON 的活都是结构化抽取，low 档思考≈0、又快又稳（服务器侧实测两连过），与
+// chat() 的默认 low 对齐；生成类参数 4096/0.4 与 B0 约定一致。
 async function askJSON(system, user) {
-  const { content } = await api('/api/chat', { system: system + zhDirective, messages: [{ role: 'user', content: user }], json: true })
-  try { return JSON.parse(content.replace(/```json|```/g, '').trim()) } catch { throw new Error(L('AI 返回格式不对，再试一次', 'AI returned an unexpected format, try again')) }
+  const r = await api('/api/chat', { system: system + zhDirective, messages: [{ role: 'user', content: user }], json: true, max_tokens: 4096, temperature: 0.4, reasoning_effort: 'low' })
+  if (r.truncated) throw new Error(L('内容达到长度上限被截断了，建议重试或让它分段继续', 'Output hit the length limit and was truncated — retry or ask it to continue'))
+  try { return JSON.parse(r.content.replace(/```json|```/g, '').trim()) } catch { throw new Error(L('AI 返回格式不对，再试一次', 'AI returned an unexpected format, try again')) }
 }
 const target = id => S.targets.find(t => t.id === id)
 const title = t => `${t.company} · ${t.role}`
@@ -197,9 +202,11 @@ async function translateRec(btn, rec) {
     btn.disabled = true
     btn.textContent = L('译 EN…', 'Translating…')
     try {
-      // 翻译要输出英文，绕开 chat() 的恒定中文指令，单独直调
-      const { content } = await api('/api/chat', { system: P.trans, messages: [{ role: 'user', content: rec.explain ?? rec.content }] })
-      rec.en = content
+      // 翻译要输出英文，绕开 chat() 的恒定中文指令，单独直调；reasoning_effort low 同 askJSON：不带 effort 时默认档思考会吃光 max_tokens 导致译文截断（2026-11-28 排查）
+      const r = await api('/api/chat', { system: P.trans, messages: [{ role: 'user', content: rec.explain ?? rec.content }], reasoning_effort: 'low' })
+      // 截断的半截译文不入库：en 保持 null，finally 走「恢复按钮可重点」路径（-03 逻辑不动），错误文案与 askJSON 截断分支对齐
+      if (r.truncated) throw new Error(L('内容达到长度上限被截断了，建议重试或让它分段继续', 'Output hit the length limit and was truncated — retry or ask it to continue'))
+      rec.en = r.content
       await save()
       btn.outerHTML = `<div class="md tren">${md(rec.en)}</div>`
     } finally {
